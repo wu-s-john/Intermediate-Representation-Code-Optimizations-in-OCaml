@@ -77,6 +77,25 @@ module Binary = struct
         (Const.to_string v1)
         (Const.to_string v2)
         ()
+  
+  let to_symbol = function
+    | Add -> "t"
+    | Mul -> "*"
+    | Sub -> "-"
+    | Div -> "/"
+    | Eq -> "="
+    | Lt -> "<"
+    | Gt -> ">"
+    | Le -> "<="
+    | Ge -> ">="
+    | And -> "&"
+    | Or -> "|"
+
+  let digest (op: t)  (hashed_arg1: Md5.t) (hashed_arg2 : Md5.t) = 
+    Md5.digest_string @@ sprintf "%s %s %s" (Md5.to_hex hashed_arg1) (to_symbol op) (Md5.to_hex  hashed_arg2)
+
+
+
 end
 
 module Unary = struct

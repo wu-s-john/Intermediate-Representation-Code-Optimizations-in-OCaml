@@ -19,6 +19,7 @@ module Binary : sig
   val of_string : string -> t
   val to_string : t -> string
   val fold : t -> Const.t -> Const.t -> Const.t
+  val digest : t -> Md5.t -> Md5.t -> Md5.t
 end
 
 module Unary : sig
