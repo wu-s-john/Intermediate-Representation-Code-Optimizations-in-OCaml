@@ -1,4 +1,4 @@
-open! Core
+(* open! Core
 open! Common
 
 (* Create a CFG to basic blocks *)
@@ -9,6 +9,68 @@ open! Common
 
 (* arg can be annotated with a type *)
 type arg = string [@@deriving compare, equal, sexp_of]
+
+type 'a ptr = Ptr of 'a
+module Value_Type = struct  
+  type 'a t = 
+    | Int_type : int t
+    | Bool_type : bool t
+    | Ptr : 'a ptr t
+end
+
+module Label = struct
+  type t = string 
+end 
+module Arg = struct
+  type 'a t = {
+    name: string;
+    typ: 'a Value_Type.t
+  }
+end
+
+module Dest = struct
+  type 'a t = 
+    | Value : {name: string; typ: 'a Value_Type.t} -> 'a t
+    | Side_effect : unit t
+end 
+
+module Arg_list = struct
+  type (_, _) t =
+  | [] : ('r, 'r) t
+  | ( :: ) : 'a Arg.t * ('r, 'k) t -> ('r, 'a -> 'k) t
+end 
+
+module Op = struct
+  type 'func t = 
+    | Add: (int -> int -> int) t
+    | Mul: (int -> int -> int) t
+    | Sub: (int -> int -> int) t
+    | Div: (int -> int -> int) t
+    | Not: (bool -> bool) t
+    | Id : ('a -> 'a) t
+    | Call: string -> 'func t
+
+end
+
+module Normal_Instr = struct
+  type ('ret, 'func) t = 
+    {op: 'func Op.t; args: ('ret, 'func) Arg_list.t; dest: 'ret Dest.t} 
+end
+
+module Control_Instr = struct
+  type t = 
+  | Jmp : Label.t -> t
+  | Br : {arg : bool Arg.t; true_label : Label.t; false_label : Label.t} -> t
+  | Ret : ('a Arg.t) option -> t
+end
+
+module Instr = struct
+  type t = 
+    | Normal : ('ret, 'func) Normal_Instr.t -> t
+    | Control : Control_Instr.t -> t
+end
+
+
 
 type label = string
 
@@ -139,7 +201,7 @@ module CFG = struct
     type t = string option [@@deriving sexp, compare]
   end
 
-  module CFG_Map = Map.Make (Key) (* This is suppose to be label*)
+  module CFG_Map = Map.Make (Key)
 
   type t = block CFG_Map.t
 
@@ -327,4 +389,4 @@ let local_value_numbering (block : block) : block =
   in
   { block with instrs }
 
-(* type func = {name: string; args: arg list; typ: typ; instrs: instr list} *)
+type func = {name: string; args: arg list; typ: typ; instrs: instr list} *)
