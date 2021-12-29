@@ -32,7 +32,7 @@ struct
             let current_dominators =
               Hashtbl.find_or_add dominator_map key ~default:(fun () -> singleton_key)
             in
-            let predecessors = Traverser.predecessors traverser key |> List.map ~f:Node.get_key in
+            let predecessors = Traverser.predecessors traverser key |> Option.to_list |> List.concat |> List.map ~f:Node.get_key in
             let new_dominators =
               Set.union singleton_key
               @@ Option.value

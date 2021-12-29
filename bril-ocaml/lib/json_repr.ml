@@ -27,27 +27,6 @@ module Make_yojson_enum (Enum : Yojson_enum) : Yojson_enum with type t := Enum.t
         (sprintf !"of_yojson Cannot process json as enum %s" @@ Yojson.Safe.pretty_to_string yojson)
 end
 
-module Type = struct
-  type t =
-    | Int_typ [@name "int"]
-    | Bool_typ [@name "bool"]
-    | Ptr_typ of t [@name "ptr"]
-  [@@deriving eq]
-
-  let rec to_yojson (t : t) : Yojson.Safe.t =
-    match t with
-    | Int_typ -> `String "int"
-    | Bool_typ -> `String "bool"
-    | Ptr_typ t -> `Assoc [ ("ptr", to_yojson t) ]
-
-  let rec of_yojson (json : Yojson.Safe.t) : (t, string) Result.t =
-    match json with
-    | `String "int" -> Ok Int_typ
-    | `String "bool" -> Ok Bool_typ
-    | `Assoc [ ("ptr", typ) ] -> of_yojson typ
-    | bad_json -> Error (sprintf !"Cannot handle Json %s" @@ Yojson.Safe.pretty_to_string bad_json)
-end
-
 module Instruction = struct
   module Op = struct
     module T = struct
@@ -78,7 +57,7 @@ module Instruction = struct
         | `Load [@name "load"]
         | `Ptradd [@name "ptradd"] *)
         ]
-      [@@deriving yojson, eq]
+      [@@deriving yojson, eq, sexp]
     end
 
     include T
@@ -91,7 +70,7 @@ module Instruction = struct
       [ `Int of int
       | `Bool of bool
       ]
-    [@@deriving eq]
+    [@@deriving eq, sexp]
 
     let to_yojson (t : t) : Yojson.Safe.t = (t :> Yojson.Safe.t)
 
@@ -113,13 +92,13 @@ module Instruction = struct
     labels : string list; [@default []]
     value : Const_value.t option; [@default None] (* This can be either int or bool and it is only for the value*)
   }
-  [@@deriving eq, yojson]    
+  [@@deriving eq, yojson, sexp]    
 
-  type label = {label: string} [@@deriving eq, yojson]
+  type label = {label: string} [@@deriving eq, yojson, sexp]
 
   type t = 
     | Instr of instr
-    | Label of label
+    | Label of label [@@deriving sexp]
   
   let to_yojson (t: t) : Yojson.Safe.t = 
       match  t with
@@ -137,15 +116,10 @@ module Instruction = struct
 end
 
 module Function = struct
-  type arg = {
-    name : string;
-    typ : Type.t; [@key "type"]
-  }
-  [@@deriving yojson]
 
   type t = {
     name : string;
-    args : arg list;
+    args : Func_arg.t list [@default []];
     instrs : Instruction.t list;
     typ : Type.t option; [@key "type"] [@default None]
   }
@@ -156,8 +130,11 @@ module Program = struct
   type t = { functions : Function.t list } [@@deriving yojson]
 end
 
+module Error = struct
+  type t = [`Malformed_instr of Instruction.t | `Bad_block_format | `Json_parse_error of string] [@@deriving sexp]
+end
+
 module Test = struct
-  open Async
 
   let test_path = "/Users/johnwu/code/bril/test/print"
 
@@ -183,10 +160,6 @@ module Test = struct
     | Ok _ -> ()
     | Error e -> failwithf !"Could not print this error: %s" e ()
 
-  let%test_unit "print every Instruction op" =
-    printf !"Print Instruction Op";
-    List.iter [ `Add; `Mul; `Call ] ~f:(fun op ->
-        printf !"Meatspin : %s\n" @@ Yojson.Safe.pretty_to_string @@ Instruction.Op.to_yojson op)
 
   let%test_unit "serialize and deserialize const instruction 2" =
     let json =
@@ -197,7 +170,7 @@ module Test = struct
     | Error e -> failwithf !"Could not print this error: %s" e ()
 
 
-  let%test_unit "serialize and deserialize json files" =
+  (* let%test_unit "serialize and deserialize json files" =
     Backtrace.elide := false;
     Thread_safe.block_on_async_exn
     @@ fun () ->
@@ -212,5 +185,5 @@ module Test = struct
               | Error e -> failwithf !"Could not print this error: %s" e ()
             in
             let serialized_program = Program.to_yojson program in
-            Yojson.Safe.pretty_print Format.std_formatter serialized_program))
+            Yojson.Safe.pretty_print Format.std_formatter serialized_program)) *)
 end

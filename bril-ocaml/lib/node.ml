@@ -8,7 +8,7 @@ module type S = sig
     include Hashable.S with type t := t
   end
 
-  type t
+  type t [@@deriving sexp]
 
   val get_key : t -> Key.t
 end

@@ -5,15 +5,15 @@ module type S = sig
   type key
   type node
 
-  val predecessors : t -> key -> node list
-  val successors : t -> key -> node list
+  val predecessors : t -> key -> node list option
+  val successors : t -> key -> node list option
   val reverse_postorder : t -> node list
   val keys : t -> key list
   val root : t -> node
 
-  (* This makes the graph algorithm less general since it assumes that there is at least one root*)
-
   val of_alist : (key * node) list -> t option
+
+  val map_inplace : t -> f:(node -> node) -> t
 end
 
 (* S with type key := Node.Key.t and type node := Node.t *)
@@ -21,10 +21,10 @@ end
 module type Node_intf = sig
   include Node.S
 
-  val children : t -> t list
+  val children : t -> Key.t list
 end
 
-module Make (Node : Node_intf) = struct
+module Make (Node : Node_intf) : S with type key := Node.Key.t and type node := Node.t = struct
   type value = {
     predecessors : Node.Key.Hash_set.t;
     node : Node.t;
@@ -34,6 +34,22 @@ module Make (Node : Node_intf) = struct
     map : (Node.Key.t, value) Hashtbl.t;
     root : Node.t;
   }
+
+  let root (t : t) = t.root
+  let keys (t : t) = Hashtbl.keys t.map
+
+  let successors ({ map; _ } : t) (key : Node.Key.t) : Node.t list option =
+    Hashtbl.find map key
+    |> Option.map ~f:(fun { node; _ } ->
+           List.filter_map (Node.children node) ~f:(fun child_key ->
+               Hashtbl.find map child_key |> Option.map ~f:(fun { node; _ } -> node)))
+
+  let predecessors ({ map; _ } : t) (key : Node.Key.t) : Node.t list option =
+    Hashtbl.find map key
+    |> Option.map ~f:(fun { predecessors; _ } ->
+           Hash_set.to_list predecessors
+           |> List.filter_map ~f:(fun parent_key ->
+                  Hashtbl.find map parent_key |> Option.map ~f:(fun { node; _ } -> node)))
 
   (* Find the root from a predecessors map by determining if a root has no predecessors *)
   let find_root (predecessors_map : (Node.Key.t, value) Hashtbl.t) : Node.t option =
@@ -47,15 +63,24 @@ module Make (Node : Node_intf) = struct
     | [ node ] -> Some node
     | _ -> None
 
+  let reverse_postorder ({ root; map } : t) : Node.t list = 
+    let queue : (Node.Key.t, Node.t) Hash_queue.t = Node.Key.Hash_queue.create () in
+    let rec go (node: Node.t) : unit =  
+      match Hash_queue.enqueue_back queue (Node.get_key node) node with
+      | `Key_already_present -> ()
+      | `Ok -> List.iter (Node.children node) ~f:(fun child -> go (Hashtbl.find_exn map child).node )
+    in 
+    go root;
+    Hash_queue.to_list queue
+
   let compute_predecessor_map (list : (Node.Key.t * Node.t) list)
       : (Node.Key.t, Node.Key.Hash_set.t) Hashtbl.t
     =
     let map : Node.Key.Hash_set.t Node.Key.Table.t = Node.Key.Table.create () in
     List.iter list ~f:(fun (key, node) ->
-        List.iter (Node.children node) ~f:(fun child ->
+        List.iter (Node.children node) ~f:(fun child_key ->
             let child_predecessors =
-              Hashtbl.find_or_add map (Node.get_key child) ~default:(fun () ->
-                  Node.Key.Hash_set.create ())
+              Hashtbl.find_or_add map child_key ~default:(fun () -> Node.Key.Hash_set.create ())
             in
             Hash_set.add child_predecessors key));
     map
@@ -71,11 +96,16 @@ module Make (Node : Node_intf) = struct
           list
           ~get_key:(fun (key, _) -> key)
           ~get_data:(fun (key, value) ->
-            { predecessors = Hashtbl.find_exn predecessors_map key; node = value })
+            { predecessors = Hashtbl.find_or_add predecessors_map key ~default:(fun () -> Node.Key.Hash_set.create ()); node = value })
       with
       | `Duplicate_keys _ -> None
       | `Ok map -> Some map
     in
     let%map root = find_root map in
     { map; root }
+
+  let map_inplace {root=_; map} ~f : t = 
+    Hashtbl.map_inplace map ~f:(fun {predecessors; node} -> {predecessors; node = f node});
+    let new_root = find_root map in 
+    {root = Option.value_exn new_root; map}
 end
