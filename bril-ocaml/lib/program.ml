@@ -7,7 +7,8 @@ type label = string [@@deriving compare, equal, sexp, hash]
 type const = {
   dest : string;
   value : [ `Int of int | `Bool of bool ];
-} [@@deriving compare, equal, sexp, hash]
+}
+[@@deriving compare, equal, sexp, hash]
 
 module Op = struct
   module Binary = struct
@@ -23,7 +24,8 @@ module Op = struct
       | `Ge
       | `And
       | `Or
-      ] [@@deriving sexp, compare, hash, eq]
+      ]
+    [@@deriving sexp, compare, hash, eq]
 
     let to_symbol = function
       | `Add -> "+"
@@ -47,7 +49,8 @@ module Op = struct
     type t =
       [ `Not
       | `Id
-      ] [@@deriving sexp, compare, hash, eq]
+      ]
+    [@@deriving sexp, compare, hash, eq]
   end
 end
 
@@ -57,36 +60,39 @@ type binary = {
   op : Op.Binary.t;
   arg1 : arg;
   arg2 : arg;
-} [@@deriving sexp, compare, hash, eq]
+}
+[@@deriving sexp, compare, hash, eq]
 
 type unary = {
   dest : string;
   typ : Type.t;
   op : Op.Unary.t;
   arg : arg;
-} [@@deriving sexp, compare, hash, eq]
+}
+[@@deriving sexp, compare, hash, eq]
 
 type br = {
   arg : arg;
   true_label : label;
   false_label : label;
-} [@@deriving sexp, compare, hash, eq]
+}
+[@@deriving sexp, compare, hash, eq]
 
 type dest = {
   dest : string;
   typ : Type.t;
-} [@@deriving compare, equal, sexp, hash]
+}
+[@@deriving compare, equal, sexp, hash]
 
 type call = {
   func_name : string;
   args : arg list;
   dest : dest option;
-} [@@deriving compare, equal, sexp, hash]
-
-(* To account for effect types, ret is wrapped around an option *)
-type ret = arg option
+}
 [@@deriving compare, equal, sexp, hash]
 
+(* To account for effect types, ret is wrapped around an option *)
+type ret = arg option [@@deriving compare, equal, sexp, hash]
 
 module Instruction = struct
   type normal =
@@ -96,19 +102,22 @@ module Instruction = struct
     | `Call of call
     | `Print of arg list
     | `Nop
-    ] [@@deriving compare, equal, sexp, hash]
+    ]
+  [@@deriving compare, equal, sexp, hash]
 
   type control =
     [ `Jmp of label
     | `Br of br
     | `Ret of arg option
-    ] [@@deriving compare, equal, sexp, hash]
+    ]
+  [@@deriving compare, equal, sexp, hash]
 
   type t =
     [ normal
     | control
     | `Label of label
-    ] [@@deriving compare, equal, sexp, hash]
+    ]
+  [@@deriving compare, equal, sexp, hash]
 
   let of_json_repr (json_instr : Json_repr.Instruction.t) : (t, Json_repr.Error.t) Result.t =
     match json_instr with
@@ -399,7 +408,7 @@ module Instruction = struct
           value = None;
         }
 
-  let used_vars (instr : [ normal | control]) : String.Set.t =
+  let used_vars (instr : [ normal | control ]) : String.Set.t =
     match instr with
     | `Const _ -> String.Set.empty
     | `Binary { arg1; arg2; _ } -> String.Set.of_list [ arg1; arg2 ]
@@ -407,7 +416,7 @@ module Instruction = struct
     | `Print args -> String.Set.of_list args
     | `Call { args; _ } -> String.Set.of_list args
     | `Nop -> String.Set.empty
-    | `Br {arg; _} -> String.Set.singleton arg
+    | `Br { arg; _ } -> String.Set.singleton arg
     | `Ret arg -> String.Set.of_list @@ Option.to_list arg
     | `Jmp _ -> String.Set.empty
 
@@ -420,13 +429,40 @@ module Instruction = struct
     | _ -> None
 end
 
-module Block = struct
-  type t = {
+module type Meta_intf = sig
+  type t [@@deriving compare, equal, sexp, hash]
+end
+
+module Block0 = struct
+  type 'meta t = {
+    meta : 'meta;
     label : label option;
     instrs : Instruction.normal list;
     terminal : [ `Control of Instruction.control | `NextLabel of label | `Terminal ];
-  } [@@deriving compare, equal, sexp, hash]
+  }
+  [@@deriving compare, equal, sexp, hash]
+end 
 
+module type Monomorphic_block_intf = sig
+  type meta
+
+  type t  = meta Block0.t [@@deriving sexp, compare, hash]
+  module Key : sig
+    type t [@@deriving sexp, compare, hash]
+
+    include Hashable.S with type t := t
+    include Comparable.S with type t := t
+  end
+
+  val get_key : meta Block0.t -> Key.t
+
+  val children : meta Block0.t -> Key.t list
+
+  val to_json_repr : meta Block0.t -> Json_repr.Instruction.t list
+end
+
+module Block = struct
+  include Block0
   module Key = struct
     module T = struct
       type t = string option [@@deriving sexp, compare, hash]
@@ -449,7 +485,7 @@ module Block = struct
     | `NextLabel label -> [ Some label ]
     | `Terminal -> []
 
-  let to_json_repr { label; instrs; terminal } : Json_repr.Instruction.t list =
+  let to_json_repr { label; instrs; terminal; meta = _ } : Json_repr.Instruction.t list =
     List.concat
       [
         Option.map label ~f:(fun label -> Json_repr.Instruction.Label { label }) |> Option.to_list;
@@ -462,6 +498,19 @@ module Block = struct
       ]
 end
 
+module Make_monomorphic_block(Meta: Meta_intf) : Monomorphic_block_intf with type meta := Meta.t  = struct
+  type t = Meta.t Block.t [@@deriving sexp, compare, hash]
+
+  module Key = Block.Key
+
+  let get_key t = Block.get_key t
+
+  let children t = Block.children t
+
+  let to_json_repr t = Block.to_json_repr t
+end 
+
+(* Maybe remove this shit *)
 module Function = struct
   module Label = struct
     module T = struct
@@ -472,7 +521,9 @@ module Function = struct
     include Hashable.Make (T)
   end
 
-  module Traverser = Node_traverser.Make (Block)
+  module Block_unit = Make_monomorphic_block(Unit)
+
+  module Traverser = Node_traverser.Make (Block_unit)
 
   type t = {
     name : string;
@@ -486,12 +537,20 @@ module Function = struct
       (block_name : label option)
       (acc_normal_instr : Instruction.normal list)
       (instrs : Instruction.t list)
-      : Block.t list
+      : unit Block.t list
     =
     match instrs with
     | [] ->
       if Option.is_none block_name && List.is_empty acc_normal_instr then []
-      else [ { label = block_name; instrs = List.rev acc_normal_instr; terminal = `Terminal } ]
+      else
+        [
+          {
+            meta = ();
+            label = block_name;
+            instrs = List.rev acc_normal_instr;
+            terminal = `Terminal;
+          };
+        ]
     | hd_instr :: tail_instr ->
       ( match hd_instr with
       (* non-control instructions should not terminate to the next block*)
@@ -500,6 +559,7 @@ module Function = struct
       | `Label label ->
         let constructed_block =
           {
+            meta = ();
             Block.label = block_name;
             instrs = List.rev acc_normal_instr;
             terminal = `NextLabel label;
@@ -509,6 +569,7 @@ module Function = struct
       | #Instruction.control as terminating_instructions ->
         let constructed_block =
           {
+            meta = ();
             Block.label = block_name;
             instrs = List.rev acc_normal_instr;
             terminal = `Control terminating_instructions;
@@ -529,7 +590,7 @@ module Function = struct
     let%bind parsed_instrs = Result.all @@ List.map instrs ~f:Instruction.of_json_repr in
     let block_list = to_basic_blocks_helper None [] parsed_instrs in
     let%map traverser =
-      Traverser.of_alist (List.map block_list ~f:(fun block -> (Block.get_key block, block)))
+      Traverser.of_alist (List.map block_list ~f:(fun block -> (Block_unit.get_key block, block)))
       |> Result.of_option ~error:`Bad_block_format
     in
     { name; args; blocks = traverser; typ }
@@ -550,7 +611,7 @@ let of_json_repr ({ functions } : Json_repr.Program.t) : (t, Json_repr.Error.t) 
 let to_json_repr ({ functions } : t) : Json_repr.Program.t =
   { Json_repr.Program.functions = List.map ~f:Function.to_json_repr functions }
 
-let run_local_optimizations ({ functions } : t) ~(f : Block.t -> Block.t) : t =
+let run_local_optimizations ({ functions } : t) ~(f : unit Block.t -> unit Block.t) : t =
   {
     functions =
       List.map functions ~f:(fun func ->
