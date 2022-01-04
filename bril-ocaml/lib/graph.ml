@@ -63,7 +63,9 @@ struct
     children : Node.Key.Set.t;
   }
 
-  let dfs_tree (t : t) : (Node.Key.t, dfs_tree_result) Hashtbl.t =
+  type dfs_tree = (Node.Key.t, dfs_tree_result) Hashtbl.t
+
+  let dfs_tree (t : t) : dfs_tree =
     let tree : (Node.Key.t, dfs_tree_result) Hashtbl.t = Node.Key.Table.create () in
     let rec go (node : Node.Key.t) (arrival_number : int ref) =
       if not @@ Hashtbl.mem tree node then
@@ -90,6 +92,95 @@ struct
     in
     go (Traverser.root t.traverser |> Node.get_key) (ref 0);
     tree
+
+  let edges (graph : ('key, 'values) Hashtbl.t) ~(f : 'values -> 'key list) : ('key * 'key) list =
+    Hashtbl.to_alist graph
+    |> List.bind ~f:(fun (source, dests) -> f dests |> List.map ~f:(fun dest -> (source, dest)))
+
+  module Edge = struct
+    module T = struct
+      type t = Node.Key.t * Node.Key.t [@@deriving sexp, compare, eq, hash]
+    end
+
+    include Comparable.Make (T)
+    include Hashable.Make (T)
+  end
+
+  let compute_back_edges ({ traverser } as t : t) (dominator_set : dominator_set)
+      : (Node.Key.t * Node.Key.t) list
+    =
+    let dfs_tree = dfs_tree t in
+    let dfs_tree_edges =
+      edges dfs_tree ~f:(fun { children; _ } -> Set.to_list children) |> Edge.Set.of_list
+    in
+    let traverser_edges = Traverser.edges traverser |> Edge.Set.of_list in
+    let possible_back_edges = Set.diff traverser_edges dfs_tree_edges in
+    Set.filter possible_back_edges ~f:(fun (source, dest) ->
+        Hashtbl.find dominator_set source
+        |> Option.value_map ~default:false ~f:(fun dominator_set -> Set.mem dominator_set dest))
+    |> Set.to_list
+
+  let get_predecessors (traverser : Traverser.t) (current_node : Node.Key.t) : Node.Key.Set.t =
+    List.concat (Option.to_list @@ Traverser.predecessors traverser current_node)
+    |> List.map ~f:Node.get_key
+    |> Node.Key.Set.of_list
+
+  let rec find_max_levels_reverse
+      ({ traverser } as t : t)
+      (explored : Node.Key.Set.t) (* Tells which child it came from *)
+      (current_level : Node.Key.Set.t)
+      (desired_dest : Node.Key.t)
+      (num_levels : int)
+      : int option
+    =
+    if Set.is_empty current_level then None
+    else if Set.mem current_level desired_dest then Some num_levels
+    else
+      let updated_explored = Set.union explored current_level in
+      let possible_next_level =
+        List.bind (Set.to_list current_level) ~f:(fun current_node ->
+            List.concat (Option.to_list @@ Traverser.predecessors traverser current_node))
+        |> List.map ~f:Node.get_key
+        |> Node.Key.Set.of_list
+      in
+      find_max_levels_reverse
+        t
+        updated_explored
+        (Set.diff possible_next_level updated_explored)
+        desired_dest
+        (num_levels + 1)
+
+  let rec find_all_paths_reverse_helper
+      ~(explored : Node.Key.Set.t)
+      ({ traverser } as t : t)
+      (source : Node.Key.t)
+      (dest : Node.Key.t)
+      (num_turns : int)
+      : Node.Key.t list list
+    =
+    if Int.equal num_turns 0 && not (Node.Key.equal source dest) then []
+    else if Int.equal num_turns 0 && Node.Key.equal source dest then [ [source] ]
+    else
+      let predecessors = get_predecessors traverser source |> Set.to_list in
+      List.bind predecessors ~f:(fun predecessor ->
+          find_all_paths_reverse_helper
+            ~explored:(Set.add explored source)
+            t
+            predecessor
+            dest
+            (num_turns - 1)
+            |> List.map ~f:(fun path -> source :: path)
+            
+            )
+
+  let find_all_paths_reverse ({ traverser } as t : t) (source: Node.Key.t) (dest: Node.Key.t) : Node.Key.t list list = 
+    Option.value_map (find_max_levels_reverse t Node.Key.Set.empty (Node.Key.Set.singleton source) dest 0) ~default:[]  ~f:(fun max_levels -> 
+      find_all_paths_reverse_helper ~explored:Node.Key.Set.empty t source dest max_levels
+      
+      )
+
+  (* let natural_loops ({ traverser } as t : t) (dominator_set : dominator_set) : Traverser.t list = 
+      let back_edges = compute_back_edges t dominator_set in *)
 
   (* compute dominator tree: It's basically like defining them like a trie  *)
 

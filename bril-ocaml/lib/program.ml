@@ -441,28 +441,9 @@ module Block0 = struct
     terminal : [ `Control of Instruction.control | `NextLabel of label | `Terminal ];
   }
   [@@deriving compare, equal, sexp, hash]
-end 
-
-module type Monomorphic_block_intf = sig
-  type meta
-
-  type t  = meta Block0.t [@@deriving sexp, compare, hash]
-  module Key : sig
-    type t [@@deriving sexp, compare, hash]
-
-    include Hashable.S with type t := t
-    include Comparable.S with type t := t
-  end
-
-  val get_key : meta Block0.t -> Key.t
-
-  val children : meta Block0.t -> Key.t list
-
-  val to_json_repr : meta Block0.t -> Json_repr.Instruction.t list
 end
 
-module Block = struct
-  include Block0
+module Block_util = struct
   module Key = struct
     module T = struct
       type t = string option [@@deriving sexp, compare, hash]
@@ -473,9 +454,9 @@ module Block = struct
     include Comparable.Make (T)
   end
 
-  let get_key { label; _ } : Key.t = label
+  let get_key ({ label; _ } : 'a Block0.t) : Key.t = label
 
-  let children { terminal; _ } : Key.t list =
+  let children ({ terminal; _ } : 'a Block0.t) : Key.t list =
     match terminal with
     | `Control control ->
       ( match control with
@@ -484,6 +465,27 @@ module Block = struct
       | `Ret _ -> [] )
     | `NextLabel label -> [ Some label ]
     | `Terminal -> []
+end
+
+module type Monomorphic_block_intf = sig
+  type meta
+  type t = meta Block0.t [@@deriving sexp, compare, hash]
+
+  module Key : sig
+    type t [@@deriving sexp, compare, hash]
+
+    include Hashable.S with type t := t
+    include Comparable.S with type t := t
+  end
+
+  val get_key : meta Block0.t -> Key.t
+  val children : meta Block0.t -> Key.t list
+  val to_json_repr : meta Block0.t -> Json_repr.Instruction.t list
+end
+
+module Block = struct
+  include Block0
+  include Block_util
 
   let to_json_repr { label; instrs; terminal; meta = _ } : Json_repr.Instruction.t list =
     List.concat
@@ -496,21 +498,31 @@ module Block = struct
         | `NextLabel _ -> []
         | `Terminal -> [] );
       ]
+
+  let variable_defintions { instrs; _ } : String.Set.t =
+    List.bind instrs ~f:(fun instr -> Option.to_list @@ Instruction.dest instr)
+    |> String.Set.of_list
+
+  let used_variables { instrs; _ } : String.Set.t =
+    String.Set.union_list
+      (List.map instrs ~f:(fun instr ->
+           Instruction.used_vars (instr :> [ Instruction.normal | Instruction.control ])))
+
+  let map ({ meta; _ } as t : 'a t) ~f : 'b t = { t with meta = f meta }
 end
 
-module Make_monomorphic_block(Meta: Meta_intf) : Monomorphic_block_intf with type meta := Meta.t  = struct
+module Make_monomorphic_block (Meta : Meta_intf) : Monomorphic_block_intf with type meta := Meta.t =
+struct
   type t = Meta.t Block.t [@@deriving sexp, compare, hash]
 
   module Key = Block.Key
 
   let get_key t = Block.get_key t
-
   let children t = Block.children t
-
   let to_json_repr t = Block.to_json_repr t
-end 
+end
 
-(* Maybe remove this shit *)
+module Block_unit = Make_monomorphic_block (Unit)
 module Function = struct
   module Label = struct
     module T = struct
@@ -521,8 +533,7 @@ module Function = struct
     include Hashable.Make (T)
   end
 
-  module Block_unit = Make_monomorphic_block(Unit)
-
+  module Block_unit = Make_monomorphic_block (Unit)
   module Traverser = Node_traverser.Make (Block_unit)
 
   type t = {

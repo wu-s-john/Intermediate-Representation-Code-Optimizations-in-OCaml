@@ -10,21 +10,48 @@ module type S = sig
   val reverse_postorder : t -> node list
   val keys : t -> key list
   val root : t -> node
-
   val of_alist : (key * node) list -> t option
-
-  val map_inplace : t -> f:(node -> node) -> t
+  val map_inplace : t -> f:(node -> node) -> t (* Could probably be in another module *)
 end
 
-(* S with type key := Node.Key.t and type node := Node.t *)
+module type Poly_intf = sig
+  type ('key, 'node) t
 
-module type Node_intf = sig
-  include Node.S
+  val predecessors : ('key, 'node) t -> 'key -> 'node list option
+  val successors : ('key, 'node) t -> 'key -> 'node list option
+  val reverse_postorder : ('key, 'node) t -> 'node list
+  val keys : ('key, 'node) t -> 'key list
 
-  val children : t -> Key.t list
+  val of_alist
+    :  (module Node.S with type t = 'node and type Key.t = 'key) ->
+    ('key * 'node) list ->
+    ('key, 'node) t option
+
+  val map_inplace : ('key, 'node) t -> f:('node -> 'node) -> ('key, 'node) t
+
+  val map
+    :  (module Node.S with type t = 'node and type Key.t = 'key) ->
+    ('key, 'node_in) t ->
+    f:('node_in -> 'node_out) ->
+    ('key, 'node_out) t
 end
 
-module Make (Node : Node_intf) : S with type key := Node.Key.t and type node := Node.t = struct
+module Node = struct
+  module type S = sig
+    include Node.S
+
+    val children : t -> Key.t list
+  end
+
+  module Make_map (N : S) (F : Node.Mapper with type _in := N.t and type key := N.Key.t) :
+    S with type t = F.t and module Key = N.Key = struct
+    include Node.Make_map (N) (F)
+
+    let children (t : t) = N.children (F.contra_f t)
+  end
+end
+
+module Make (Node : Node.S) : S with type key := Node.Key.t and type node := Node.t = struct
   type value = {
     predecessors : Node.Key.Hash_set.t;
     node : Node.t;
@@ -63,13 +90,13 @@ module Make (Node : Node_intf) : S with type key := Node.Key.t and type node := 
     | [ node ] -> Some node
     | _ -> None
 
-  let reverse_postorder ({ root; map } : t) : Node.t list = 
+  let reverse_postorder ({ root; map } : t) : Node.t list =
     let queue : (Node.Key.t, Node.t) Hash_queue.t = Node.Key.Hash_queue.create () in
-    let rec go (node: Node.t) : unit =  
+    let rec go (node : Node.t) : unit =
       match Hash_queue.enqueue_back queue (Node.get_key node) node with
       | `Key_already_present -> ()
-      | `Ok -> List.iter (Node.children node) ~f:(fun child -> go (Hashtbl.find_exn map child).node )
-    in 
+      | `Ok -> List.iter (Node.children node) ~f:(fun child -> go (Hashtbl.find_exn map child).node)
+    in
     go root;
     Hash_queue.to_list queue
 
@@ -96,7 +123,12 @@ module Make (Node : Node_intf) : S with type key := Node.Key.t and type node := 
           list
           ~get_key:(fun (key, _) -> key)
           ~get_data:(fun (key, value) ->
-            { predecessors = Hashtbl.find_or_add predecessors_map key ~default:(fun () -> Node.Key.Hash_set.create ()); node = value })
+            {
+              predecessors =
+                Hashtbl.find_or_add predecessors_map key ~default:(fun () ->
+                    Node.Key.Hash_set.create ());
+              node = value;
+            })
       with
       | `Duplicate_keys _ -> None
       | `Ok map -> Some map
@@ -104,8 +136,8 @@ module Make (Node : Node_intf) : S with type key := Node.Key.t and type node := 
     let%map root = find_root map in
     { map; root }
 
-  let map_inplace {root=_; map} ~f : t = 
-    Hashtbl.map_inplace map ~f:(fun {predecessors; node} -> {predecessors; node = f node});
-    let new_root = find_root map in 
-    {root = Option.value_exn new_root; map}
+  let map_inplace { root = _; map } ~f : t =
+    Hashtbl.map_inplace map ~f:(fun { predecessors; node } -> { predecessors; node = f node });
+    let new_root = find_root map in
+    { root = Option.value_exn new_root; map }
 end
