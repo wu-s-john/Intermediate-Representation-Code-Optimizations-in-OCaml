@@ -159,7 +159,7 @@ struct
       : Node.Key.t list list
     =
     if Int.equal num_turns 0 && not (Node.Key.equal source dest) then []
-    else if Int.equal num_turns 0 && Node.Key.equal source dest then [ [source] ]
+    else if Int.equal num_turns 0 && Node.Key.equal source dest then [ [ source ] ]
     else
       let predecessors = get_predecessors traverser source |> Set.to_list in
       List.bind predecessors ~f:(fun predecessor ->
@@ -169,15 +169,16 @@ struct
             predecessor
             dest
             (num_turns - 1)
-            |> List.map ~f:(fun path -> source :: path)
-            
-            )
+          |> List.map ~f:(fun path -> source :: path))
 
-  let find_all_paths_reverse ({ traverser } as t : t) (source: Node.Key.t) (dest: Node.Key.t) : Node.Key.t list list = 
-    Option.value_map (find_max_levels_reverse t Node.Key.Set.empty (Node.Key.Set.singleton source) dest 0) ~default:[]  ~f:(fun max_levels -> 
-      find_all_paths_reverse_helper ~explored:Node.Key.Set.empty t source dest max_levels
-      
-      )
+  let find_all_paths_reverse (t : t) (source : Node.Key.t) (dest : Node.Key.t)
+      : Node.Key.t list list
+    =
+    Option.value_map
+      (find_max_levels_reverse t Node.Key.Set.empty (Node.Key.Set.singleton source) dest 0)
+      ~default:[]
+      ~f:(fun max_levels ->
+        find_all_paths_reverse_helper ~explored:Node.Key.Set.empty t source dest max_levels) |> List.map ~f:(List.rev)
 
   (* let natural_loops ({ traverser } as t : t) (dominator_set : dominator_set) : Traverser.t list = 
       let back_edges = compute_back_edges t dominator_set in *)
