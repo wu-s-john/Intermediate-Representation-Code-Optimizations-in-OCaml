@@ -16,7 +16,7 @@ end
 type ('key) dfs_tree_result = {
   comparable : (module Comparable with type t = 'key);
   arrival_number : int;
-  children : C;
+  (* children : C; *)
 }
 
 module type Poly_intf = sig
