@@ -1,5 +1,0 @@
-(library
-  (kind ppx_rewriter)
-  (name yojson_enum_ppx)
-  (preprocess (pps ppxlib.metaquot))
-  (libraries yojson ppxlib))

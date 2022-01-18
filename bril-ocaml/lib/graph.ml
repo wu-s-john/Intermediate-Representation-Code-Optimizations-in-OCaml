@@ -13,6 +13,19 @@ module type S = sig
   val get_dominators : t -> (Node.Key.t, Node.Key.t list) Hashtbl.t
 end
 
+type ('key) dfs_tree_result = {
+  comparable : (module Comparable with type t = 'key);
+  arrival_number : int;
+  children : C;
+}
+
+module type Poly_intf = sig
+  type ('key, 'node) t = ('key, 'node) Node_traverser.Poly.t
+
+  val dominators : ('key, 'node) t -> ('key, 'key) t
+
+end 
+
 module Graph
     (Node : Node.S)
     (Traverser : Node_traverser.S with type key := Node.Key.t with type node := Node.t) =
