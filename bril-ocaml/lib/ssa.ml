@@ -182,12 +182,12 @@ module Rename_state = struct
       (`Print updated_args, rename_scope)
     | `Call { func_name; args; dest } ->
       let updated_args = List.map args ~f:(get_rename rename_scope) in
-      ( match dest with
+      (match dest with
       | None -> (`Call { func_name; args = updated_args; dest = None }, rename_scope)
       | Some { dest; typ } ->
         let new_dest = redefine_definition counter_map dest in
         ( `Call { func_name; args = updated_args; dest = Some { dest = new_dest; typ } },
-          rename_scope ) )
+          rename_scope ))
 end
 
 module Rename_block = struct
@@ -277,11 +277,12 @@ let rec rename_block
         (Node_traverser.Poly.find_exn traverser subsequent_dominator))
 
 let rename
-    ~(dominator_tree : (Block.Key.t, Block.Key.t) Node_traverser.Poly.t)
-    (phi_placing_traverser : (Block.Key.t, Phi_placing_block.t) Node_traverser.Poly.t)
+    ~(_dominator_tree : (Block.Key.t, Block.Key.t) Node_traverser.Poly.t)
+    (_phi_placing_traverser : (Block.Key.t, Phi_placing_block.t) Node_traverser.Poly.t)
     : (Block.Key.t, Rename_block.t) Node_traverser.Poly.t
   =
-  let counter_map = Counter_map.create () in
+  failwith "TODO: Implement"
+  (* let counter_map = Counter_map.create () in
   let rename_scope = Variable.Map.empty in
   let traverser =
     Node_traverser.Poly.map
@@ -302,4 +303,4 @@ let rename
     ~dominator_tree
     traverser
     (Node_traverser.Poly.root traverser);
-  traverser
+  traverser *)

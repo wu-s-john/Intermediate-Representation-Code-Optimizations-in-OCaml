@@ -10,6 +10,7 @@ module type S = sig
   val root : t -> node
   val of_alist : (key * node) list -> t option
   val map_inplace : t -> f:(node -> node) -> t (* Could probably be in another module *)
+
   val edges : t -> (key * key) list
 end
 
@@ -35,7 +36,7 @@ module type Poly_intf = sig
     ('key, 'node) t option
 
   val map
-    :  (module Node_intf with type t = 'node and type Key.t = 'key) ->
+    :  (module Node_intf with type t = 'node_out and type Key.t = 'key) ->
     ('key, 'node_in) t ->
     f:('node_in -> 'node_out) ->
     ('key, 'node_out) t

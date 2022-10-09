@@ -1,5 +1,4 @@
 open! Core
-open! Common
 
 type label = string [@@deriving compare, equal, sexp_of]
 type arg = string [@@deriving compare, equal, sexp_of]
