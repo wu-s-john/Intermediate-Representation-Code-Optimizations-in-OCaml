@@ -13,30 +13,22 @@ module type S = sig
   val get_dominators : t -> (Node.Key.t, Node.Key.t list) Hashtbl.t
 end
 
-type ('key) dfs_tree_result = {
+type 'key dfs_tree_result = {
   comparable : (module Comparable with type t = 'key);
   arrival_number : int;
 }
 
-module type Poly_intf = sig
-  type ('key, 'node) t = ('key, 'node) Node_traverser.Poly.t
+module Graph (Node : Node.S) = struct
+  module Traverser = Node_traverser.Poly
 
-  val dominators : ('key, 'node) t -> ('key, 'key) t
-
-end 
-
-module Graph
-    (Node : Node.S)
-    (Traverser : Node_traverser.S with type key := Node.Key.t with type node := Node.t) =
-struct
-  type t = { traverser : Traverser.t }
+  type t = (Node.Key.t, Node.t) Node_traverser.Poly.t
   type dominator_set = (Node.Key.t, Node.Key.Set.t) Hashtbl.t
 
-  let compute_dominators ({ traverser } : t) : dominator_set =
+  let compute_dominators (traverser : t) : dominator_set =
     let post_order_nodes =
       Traverser.reverse_postorder traverser |> List.map ~f:Node.get_key |> Node.Key.Set.of_list
     in
-    let dominator_map : (Node.Key.t, Node.Key.Set.t) Hashtbl.t =
+    let dominator_map : dominator_set =
       Traverser.keys traverser
       |> List.map ~f:(fun key -> (key, Node.Key.Set.singleton key))
       |> Node.Key.Table.of_alist_exn
@@ -77,12 +69,12 @@ struct
 
   type dfs_tree = (Node.Key.t, dfs_tree_result) Hashtbl.t
 
-  let dfs_tree (t : t) : dfs_tree =
+  let dfs_tree (traverser : t) : dfs_tree =
     let tree : (Node.Key.t, dfs_tree_result) Hashtbl.t = Node.Key.Table.create () in
     let rec go (node : Node.Key.t) (arrival_number : int ref) =
       if not @@ Hashtbl.mem tree node then
         List.iter
-          (List.concat @@ Option.to_list @@ Traverser.successors t.traverser node)
+          (List.concat @@ Option.to_list @@ Traverser.successors traverser node)
           ~f:(fun child ->
             Hashtbl.update
               tree
@@ -102,7 +94,7 @@ struct
             arrival_number := !arrival_number + 1;
             go (Node.get_key child) arrival_number)
     in
-    go (Traverser.root t.traverser |> Node.get_key) (ref 0);
+    go (Traverser.root traverser |> Node.get_key) (ref 0);
     tree
 
   let edges (graph : ('key, 'values) Hashtbl.t) ~(f : 'values -> 'key list) : ('key * 'key) list =
@@ -118,10 +110,10 @@ struct
     include Hashable.Make (T)
   end
 
-  let compute_back_edges ({ traverser } as t : t) (dominator_set : dominator_set)
+  let compute_back_edges (traverser : t) (dominator_set : dominator_set)
       : (Node.Key.t * Node.Key.t) list
     =
-    let dfs_tree = dfs_tree t in
+    let dfs_tree = dfs_tree traverser in
     let dfs_tree_edges =
       edges dfs_tree ~f:(fun { children; _ } -> Set.to_list children) |> Edge.Set.of_list
     in
@@ -132,13 +124,13 @@ struct
         |> Option.value_map ~default:false ~f:(fun dominator_set -> Set.mem dominator_set dest))
     |> Set.to_list
 
-  let get_predecessors (traverser : Traverser.t) (current_node : Node.Key.t) : Node.Key.Set.t =
+  let get_predecessors (traverser : t) (current_node : Node.Key.t) : Node.Key.Set.t =
     List.concat (Option.to_list @@ Traverser.predecessors traverser current_node)
     |> List.map ~f:Node.get_key
     |> Node.Key.Set.of_list
 
   let rec find_max_levels_reverse
-      ({ traverser } as t : t)
+      (traverser : t)
       (explored : Node.Key.Set.t) (* Tells which child it came from *)
       (current_level : Node.Key.Set.t)
       (desired_dest : Node.Key.t)
@@ -156,7 +148,7 @@ struct
         |> Node.Key.Set.of_list
       in
       find_max_levels_reverse
-        t
+        traverser
         updated_explored
         (Set.diff possible_next_level updated_explored)
         desired_dest
@@ -164,7 +156,7 @@ struct
 
   let rec find_all_paths_reverse_helper
       ~(explored : Node.Key.Set.t)
-      ({ traverser } as t : t)
+      (traverser : t)
       (source : Node.Key.t)
       (dest : Node.Key.t)
       (num_turns : int)
@@ -177,7 +169,7 @@ struct
       List.bind predecessors ~f:(fun predecessor ->
           find_all_paths_reverse_helper
             ~explored:(Set.add explored source)
-            t
+            traverser
             predecessor
             dest
             (num_turns - 1)
@@ -190,7 +182,8 @@ struct
       (find_max_levels_reverse t Node.Key.Set.empty (Node.Key.Set.singleton source) dest 0)
       ~default:[]
       ~f:(fun max_levels ->
-        find_all_paths_reverse_helper ~explored:Node.Key.Set.empty t source dest max_levels) |> List.map ~f:(List.rev)
+        find_all_paths_reverse_helper ~explored:Node.Key.Set.empty t source dest max_levels)
+    |> List.map ~f:List.rev
 
   (* let natural_loops ({ traverser } as t : t) (dominator_set : dominator_set) : Traverser.t list = 
       let back_edges = compute_back_edges t dominator_set in *)

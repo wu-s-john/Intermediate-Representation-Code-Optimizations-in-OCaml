@@ -315,7 +315,7 @@ module Test = struct
              ~f:dead_code_elimination)
     |> Deferred.ignore_m
 
-  let%test_unit "lvn works" =
+  (* let%test_unit "lvn works" =
     let dir = "/Users/johnwu/code/bril/examples/test/lvn" in
     Backtrace.elide := false;
     Async.Thread_safe.block_on_async_exn
@@ -328,7 +328,7 @@ module Test = struct
              ~filename:(dir ^/ filename)
              ~expected:(dir ^/ expected)
              ~f:local_value_numbering)
-    |> Deferred.ignore_m
+    |> Deferred.ignore_m *)
 end
 
 module String_shit = struct

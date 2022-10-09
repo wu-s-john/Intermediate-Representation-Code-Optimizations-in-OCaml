@@ -10,46 +10,34 @@ module type Node_operations_intf = sig
   val zero : data
 end
 
-module Outer_node = Node
+type ('node, 'flow_value) flow_node = {
+  node : 'node;
+  in_ : 'flow_value;
+  out : 'flow_value;
+}
 
 module Make
-    (Node : Node_traverser.Node_intf)
+    (Node : Node.S)
     (Ops : Node_operations_intf with type key := Node.Key.t and type t := Node.t) =
 struct
   type data = Ops.data
 
-  module Node_with_data = struct
-    module T = struct
-      type t = {
-        node : Node.t;
-        in_ : data;
-        out : data;
-      }
-
-      let f (t : Node.t) : t = { node = t; in_ = Ops.zero; out = Ops.zero }
-      let contra_f ({ node; _ } : t) = node
-    end
-
-    include T
-    include Node_traverser.Node.Make_map (Node) (T)
-  end
-
   type t = {
     work_list : Node.Key.t Node.Key.Hash_queue.t;
-    traverser : (Node.Key.t, Node_with_data.t) Node_traverser.Poly.t;
+    traverser : (Node.Key.t, (Node.t, data) flow_node) Node_traverser.Poly.t;
   }
 
   let rec run_forward_loop ({ work_list; traverser } as t) : unit =
     let open Ops in
     Option.iter (Hash_queue.dequeue_front_with_key work_list) ~f:(fun (key, _) ->
-        let Node_with_data.T.{ node; in_ = _; out } = Node_traverser.Poly.find_exn traverser key in
+        let { node; in_ = _; out } = Node_traverser.Poly.find_exn traverser key in
         let predecessors =
           List.concat (Option.to_list (Node_traverser.Poly.predecessors traverser key))
         in
-        let prededcessors_out_data = List.map predecessors ~f:(fun { out; _ } -> out) in
-        let updated_in = merge prededcessors_out_data in
+        let predecessors_out_data = List.map predecessors ~f:(fun { out; _ } -> out) in
+        let updated_in = merge predecessors_out_data in
         let updated_out = transform node updated_in in
-        let updated_node = Node_with_data.T.{ node; in_ = updated_in; out = updated_out } in
+        let updated_node = { node; in_ = updated_in; out = updated_out } in
         Node_traverser.Poly.update traverser updated_node;
         if not @@ equal_data out updated_out then
           List.iter
@@ -62,11 +50,12 @@ struct
               ());
         run_forward_loop t)
 
-  let run_forward (traverser : (Node.Key.t, Node.t) Node_traverser.Poly.t)
-      : (Node.Key.t, Node_with_data.t) Node_traverser.Poly.t
-    =
+  let run_forward (traverser : (Node.Key.t, Node.t) Node_traverser.Poly.t) =
     let traverser_with_data =
-      Node_traverser.Poly.map (module Node_with_data) traverser ~f:Node_with_data.f
+      Node_traverser.Poly.inv_map
+        ~contra_f:(fun { node; _ } -> node)
+        traverser
+        ~f:(fun node -> { node; in_ = Ops.zero; out = Ops.zero })
     in
     let work_list = Node.Key.Hash_queue.create () in
     let t = { traverser = traverser_with_data; work_list } in
@@ -100,8 +89,6 @@ module Reaching_defintion (Block : Program.Monomorphic_block_intf) = struct
 
   module Worklist = Make (Block) (Definitions)
 
-  let run (traverser : (Block.Key.t, Block.t) Node_traverser.Poly.t)
-      : (Block.Key.t, Worklist.Node_with_data.t) Node_traverser.Poly.t
-    =
+  let run (traverser : (Block.Key.t, Block.t) Node_traverser.Poly.t) =
     Worklist.run_forward traverser
 end
