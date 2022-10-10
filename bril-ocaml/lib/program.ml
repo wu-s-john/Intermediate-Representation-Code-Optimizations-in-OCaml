@@ -122,7 +122,7 @@ module Instruction = struct
     match json_instr with
     | Label { label } -> Ok (`Label label)
     | Instr instr ->
-      ( match instr with
+      (match instr with
       | {
        op = `Add;
        dest = Some dest;
@@ -319,7 +319,7 @@ module Instruction = struct
        value = Some (`Bool value);
       } ->
         Ok (`Const { dest; value = `Bool value })
-      | malformed_instr -> Error (`Malformed_instr (Instr malformed_instr)) )
+      | malformed_instr -> Error (`Malformed_instr (Instr malformed_instr)))
 
   let to_json_repr (instr : t) : Json_repr.Instruction.t =
     match instr with
@@ -432,7 +432,7 @@ module type Meta_intf = sig
   type t [@@deriving compare, equal, sexp, hash]
 end
 
-module Block0 = struct
+module Block = struct
   type 'meta t = {
     meta : 'meta;
     label : label option;
@@ -440,9 +440,7 @@ module Block0 = struct
     terminal : [ `Control of Instruction.control | `NextLabel of label | `Terminal ];
   }
   [@@deriving compare, equal, sexp, hash]
-end
 
-module Block_util = struct
   module Key = struct
     module T = struct
       type t = string option [@@deriving sexp, compare, hash]
@@ -453,38 +451,17 @@ module Block_util = struct
     include Comparable.Make (T)
   end
 
-  let get_key ({ label; _ } : 'a Block0.t) : Key.t = label
+  let get_key ({ label; _ } : 'a t) : Key.t = label
 
-  let children ({ terminal; _ } : 'a Block0.t) : Key.t list =
+  let children ({ terminal; _ } : 'a t) : Key.t list =
     match terminal with
     | `Control control ->
-      ( match control with
+      (match control with
       | `Jmp label -> [ Some label ]
       | `Br { true_label; false_label; _ } -> [ Some true_label; Some false_label ]
-      | `Ret _ -> [] )
+      | `Ret _ -> [])
     | `NextLabel label -> [ Some label ]
     | `Terminal -> []
-end
-
-module type Monomorphic_block_intf = sig
-  type meta
-  type t = meta Block0.t [@@deriving sexp, compare, hash]
-
-  module Key : sig
-    type t [@@deriving sexp, compare, hash]
-
-    include Hashable.S with type t := t
-    include Comparable.S with type t := t
-  end
-
-  val get_key : meta Block0.t -> Key.t
-  val children : meta Block0.t -> Key.t list
-  val to_json_repr : meta Block0.t -> Json_repr.Instruction.t list
-end
-
-module Block = struct
-  include Block0
-  include Block_util
 
   let to_json_repr { label; instrs; terminal; meta = _ } : Json_repr.Instruction.t list =
     List.concat
@@ -492,10 +469,10 @@ module Block = struct
         Option.map label ~f:(fun label -> Json_repr.Instruction.Label { label }) |> Option.to_list;
         List.map instrs ~f:(fun normal_instr ->
             Instruction.to_json_repr (normal_instr :> Instruction.t));
-        ( match terminal with
+        (match terminal with
         | `Control control_instr -> [ Instruction.to_json_repr (control_instr :> Instruction.t) ]
         | `NextLabel _ -> []
-        | `Terminal -> [] );
+        | `Terminal -> []);
       ]
 
   let variable_defintions { instrs; _ } : String.Set.t =
@@ -510,8 +487,18 @@ module Block = struct
   let map ({ meta; _ } as t : 'a t) ~f : 'b t = { t with meta = f meta }
 end
 
-module Make_monomorphic_block (Meta : Meta_intf) : Monomorphic_block_intf with type meta := Meta.t =
-struct
+module type Monomorphic_block_intf = sig
+  type meta
+  type t = meta Block.t [@@deriving sexp, compare, hash]
+
+  include Node.S with type t := t
+
+  val to_json_repr : meta Block.t -> Json_repr.Instruction.t list
+end
+
+(* This is useful to remove have Block module without any polymorphic type parameters *)
+module Make_monomorphic_block (Meta : Meta_intf) :
+  Monomorphic_block_intf with type meta := Meta.t and module Key = Block.Key = struct
   type t = Meta.t Block.t [@@deriving sexp, compare, hash]
 
   module Key = Block.Key
@@ -522,23 +509,14 @@ struct
 end
 
 module Block_unit = Make_monomorphic_block (Unit)
+
 module Function = struct
-  module Label = struct
-    module T = struct
-      type t = string option [@@deriving compare, equal, sexp, hash]
-    end
-
-    include T
-    include Hashable.Make (T)
-  end
-
-  module Block_unit = Make_monomorphic_block (Unit)
-  module Traverser = Node_traverser.Make (Block_unit)
+  type blocks = (Block.Key.t, unit Block.t) Node_traverser.Poly.t
 
   type t = {
     name : string;
     args : Func_arg.t list;
-    blocks : Traverser.t;
+    blocks : blocks;
     typ : Type.t option;
   }
 
@@ -562,7 +540,7 @@ module Function = struct
           };
         ]
     | hd_instr :: tail_instr ->
-      ( match hd_instr with
+      (match hd_instr with
       (* non-control instructions should not terminate to the next block*)
       | #Instruction.normal as instr ->
         to_basic_blocks_helper block_name (instr :: acc_normal_instr) tail_instr
@@ -585,13 +563,12 @@ module Function = struct
             terminal = `Control terminating_instructions;
           }
         in
-        ( match tail_instr with
+        (match tail_instr with
         | [] -> [ constructed_block ]
         | `Label next_label :: tail_tail_instr ->
           constructed_block :: to_basic_blocks_helper (Some next_label) [] tail_tail_instr
         | tail_hd_instr :: tail_tail_instr ->
-          constructed_block :: to_basic_blocks_helper None [] (tail_hd_instr :: tail_tail_instr) )
-      )
+          constructed_block :: to_basic_blocks_helper None [] (tail_hd_instr :: tail_tail_instr)))
 
   let of_json_repr ({ name; args; instrs; typ } : Json_repr.Function.t)
       : (t, Json_repr.Error.t) Result.t
@@ -600,13 +577,15 @@ module Function = struct
     let%bind parsed_instrs = Result.all @@ List.map instrs ~f:Instruction.of_json_repr in
     let block_list = to_basic_blocks_helper None [] parsed_instrs in
     let%map traverser =
-      Traverser.of_alist (List.map block_list ~f:(fun block -> (Block_unit.get_key block, block)))
+      Node_traverser.Poly.of_alist
+        (module Block_unit)
+        (List.map block_list ~f:(fun block -> (Block.get_key block, block)))
       |> Result.of_option ~error:`Bad_block_format
     in
     { name; args; blocks = traverser; typ }
 
   let to_json_repr ({ name; args; blocks; typ } : t) : Json_repr.Function.t =
-    let blocks = Traverser.reverse_postorder blocks in
+    let blocks = Node_traverser.Poly.reverse_postorder blocks in
     let instrs = List.bind blocks ~f:Block.to_json_repr in
     { Json_repr.Function.name; args; typ; instrs }
 end
@@ -622,26 +601,5 @@ let to_json_repr ({ functions } : t) : Json_repr.Program.t =
   { Json_repr.Program.functions = List.map ~f:Function.to_json_repr functions }
 
 let run_local_optimizations ({ functions } : t) ~(f : unit Block.t -> unit Block.t) : t =
-  {
-    functions =
-      List.map functions ~f:(fun func ->
-          { func with blocks = Function.Traverser.map_inplace func.blocks ~f });
-  }
-
-(* This interface is mostly used for dataflow algorithms *)
-module type Node_intf__ = sig
-  type t [@@deriving sexp, eq, hash, compare]
-  type key
-  type data
-
-  val key : t -> key
-  val transform : t -> data -> data
-  val merge : data list -> data
-end
-
-(* module Worklist(Node: Node_intf) = struct
-
-  let run_forward
-
-
-end  *)
+  List.iter functions ~f:(fun func -> Node_traverser.Poly.map_inplace func.blocks ~f);
+  { functions }

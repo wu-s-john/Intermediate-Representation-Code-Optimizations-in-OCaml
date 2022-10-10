@@ -19,7 +19,7 @@ module Phi_references = struct
 end
 
 module Phi_placing_block = struct
-  include Program.Block_util
+  include Program.Block
 
   type meta = {
     defined_variables : Variable.Set.t;
@@ -191,7 +191,7 @@ module Rename_state = struct
 end
 
 module Rename_block = struct
-  include Program.Block_util
+  include Program.Block
 
   module Arg_data = struct
     module T = struct
@@ -281,7 +281,7 @@ let rename
     (_phi_placing_traverser : (Block.Key.t, Phi_placing_block.t) Node_traverser.Poly.t)
     : (Block.Key.t, Rename_block.t) Node_traverser.Poly.t
   =
-  failwith "TODO: Implement"
+  failwith "Need to implement"
   (* let counter_map = Counter_map.create () in
   let rename_scope = Variable.Map.empty in
   let traverser =
