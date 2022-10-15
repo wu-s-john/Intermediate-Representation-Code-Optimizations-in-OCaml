@@ -4,7 +4,7 @@ type t =
 | Int_typ [@name "int"]
 | Bool_typ [@name "bool"]
 | Ptr_typ of t [@name "ptr"]
-[@@deriving compare, equal, sexp, hash]
+[@@deriving compare, equal, sexp, hash, to_yojson]
 
 let rec to_yojson (t : t) : Yojson.Safe.t =
 match t with

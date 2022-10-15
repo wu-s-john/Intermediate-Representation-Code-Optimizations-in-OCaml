@@ -50,7 +50,30 @@ struct
               ());
         run_forward_loop t)
 
-  let run_forward (traverser : (Node.Key.t, Node.t) Node_traverser.Poly.t) =
+  let rec run_backwards_loop ({ work_list; traverser } as t) : unit =
+    let open Ops in
+    Option.iter (Hash_queue.dequeue_front_with_key work_list) ~f:(fun (key, _) ->
+        let { node; in_; out = _ } = Node_traverser.Poly.find_exn traverser key in
+        let successors =
+          List.concat (Option.to_list (Node_traverser.Poly.successors traverser key))
+        in
+        let successors_in_data = List.map successors ~f:(fun { in_; _ } -> in_) in
+        let updated_out = merge successors_in_data in
+        let updated_in = transform node updated_out in
+        let updated_node = { node; in_ = updated_in; out = updated_out } in
+        Node_traverser.Poly.update traverser updated_node;
+        if not @@ equal_data in_ updated_in then
+          List.iter
+            (List.concat (Option.to_list (Node_traverser.Poly.successors traverser key)))
+            ~f:(fun { node = succesor_node; _ } ->
+              let (_ : [ `Key_already_present | `Ok ]) =
+                let key = Node.get_key succesor_node in
+                Hash_queue.enqueue_back work_list key key
+              in
+              ());
+        run_backwards_loop t)
+
+  let run (traverser : (Node.Key.t, Node.t) Node_traverser.Poly.t) ~f =
     let traverser_with_data =
       Node_traverser.Poly.inv_map
         ~contra_f:(fun { node; _ } -> node)
@@ -59,36 +82,12 @@ struct
     in
     let work_list = Node.Key.Hash_queue.create () in
     let t = { traverser = traverser_with_data; work_list } in
-    run_forward_loop t;
+    f t;
     traverser_with_data
-end
 
-module Reaching_defintion (Block : Program.Monomorphic_block_intf) = struct
-  module Variable = String
-  module Definitions0 = Multi_map_set.Make (Variable) (Block.Key)
+  let run_forward (traverser : (Node.Key.t, Node.t) Node_traverser.Poly.t) =
+    run traverser ~f:run_forward_loop
 
-  module Definitions = struct
-    type data = Definitions0.t
-
-    let zero = Definitions0.empty
-
-    let merge (ins : data list) : data =
-      List.fold_left ins ~init:Definitions0.empty ~f:Definitions0.merge
-
-    let transform (block : Block.t) (definitions : data) : data =
-      List.fold block.instrs ~init:definitions ~f:(fun definitions instr ->
-          Option.value_map
-            (Program.Instruction.dest instr)
-            ~default:definitions
-            ~f:(fun defintion ->
-              let removed_defintion : data = Definitions0.remove definitions defintion in
-              Definitions0.upsert removed_defintion defintion (Block.get_key block : Block.Key.t)))
-
-    let equal_data = Definitions0.equal
-  end
-
-  module Worklist = Make (Block) (Definitions)
-
-  let run (traverser : (Block.Key.t, Block.t) Node_traverser.Poly.t) =
-    Worklist.run_forward traverser
+  let run_backwards (traverser : (Node.Key.t, Node.t) Node_traverser.Poly.t) =
+    run traverser ~f:run_backwards_loop
 end

@@ -3,20 +3,7 @@ open Core
 
 type phi_references = Block.Key.Set.t String.Map.t
 
-module Variable = String
-
-module Phi_references = struct
-  type t = Block.Key.Set.t Variable.Map.t [@@deriving sexp]
-
-  let empty = String.Map.empty
-
-  let upsert (t : t) (variable : string) (key : Block.Key.t) : [ `Updated of t | `Not_updated ] =
-    match Map.find t variable with
-    | None -> `Updated (Map.add_exn t ~key:variable ~data:(Block.Key.Set.singleton key))
-    | Some referenced_predecessors ->
-      if Set.mem referenced_predecessors key then `Not_updated
-      else `Updated (Map.set t ~key:variable ~data:(Set.add referenced_predecessors key))
-end
+module Phi_references = Multi_map_set.Make (Variable) (Block.Key)
 
 module Phi_placing_block = struct
   include Program.Block
@@ -34,7 +21,7 @@ module Phi_placing_block = struct
       : t
     =
     Block.map block ~f:(fun () ->
-        let defined_variables = Block.variable_defintions block in
+        let defined_variables = Block.variable_definitions block in
         {
           defined_variables;
           domaniance_frontier = Hashtbl.find_exn dominator_frontier block.label;
@@ -44,9 +31,9 @@ module Phi_placing_block = struct
   let upsert_to_phi (t : t) (variable : Variable.t) (block_key : Block.Key.t)
       : [ `Updated of t | `Not_updated ]
     =
-    match Phi_references.upsert t.meta.references variable block_key with
-    | `Not_updated -> `Not_updated
-    | `Updated new_references ->
+    if Phi_references.mem t.meta.references variable block_key then `Not_updated
+    else
+      let new_references = Phi_references.upsert t.meta.references variable block_key in
       `Updated (Block.map t ~f:(fun meta -> { meta with references = new_references }))
 
   let is_defined (t : t) (variable : Variable.t) : bool = Map.mem t.meta.references variable
@@ -62,7 +49,7 @@ let compute_variable_defintion_to_block_mapping
     : (Variable.t, Block.Key.Set.t) Hashtbl.t
   =
   List.bind (Node_traverser.Poly.nodes block_graph) ~f:(fun block ->
-      let variables = Set.to_list (Block.variable_defintions block) in
+      let variables = Set.to_list (Block.variable_definitions block) in
       List.map variables ~f:(fun variable -> (variable, Block.get_key block)))
   |> Variable.Table.of_alist_multi
   |> Hashtbl.map ~f:Block.Key.Set.of_list
@@ -70,7 +57,7 @@ let compute_variable_defintion_to_block_mapping
 let variables (blocks : (Block.Key.t, Block_unit.t) Node_traverser.Poly.t) : String.Set.t =
   let result =
     List.map (Node_traverser.Poly.nodes blocks) ~f:(fun block ->
-        Set.union (Block.variable_defintions block) (Block.used_variables block))
+        Set.union (Block.variable_definitions block) (Block.used_variables block))
   in
   String.Set.union_list result
 
@@ -87,7 +74,7 @@ let add_phi_function
       t
       ~f:(fun block ->
         Block.map block ~f:(fun () ->
-            let defined_variables = Block.variable_defintions block in
+            let defined_variables = Block.variable_definitions block in
             Phi_placing_block.
               {
                 defined_variables;
@@ -282,7 +269,7 @@ let rename
     : (Block.Key.t, Rename_block.t) Node_traverser.Poly.t
   =
   failwith "Need to implement"
-  (* let counter_map = Counter_map.create () in
+(* let counter_map = Counter_map.create () in
   let rename_scope = Variable.Map.empty in
   let traverser =
     Node_traverser.Poly.map

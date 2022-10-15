@@ -1,6 +1,13 @@
 (library
-  (name bril)
-  (public_name bril)
-  (inline_tests)
-  (libraries core yojson ppx_deriving_yojson.runtime async)
-  (preprocess (pps ppx_jane ppx_deriving_yojson ppx_assert ppx_deriving.eq ppx_expect)))
+ (name bril)
+ (public_name bril)
+ (inline_tests)
+ (libraries core yojson ppx_deriving_yojson.runtime async ppx_show.runtime)
+ (preprocess
+  (pps
+   ppx_jane
+   ppx_deriving_yojson
+   ppx_assert
+   ppx_deriving.eq
+   ppx_expect
+   ppx_show)))

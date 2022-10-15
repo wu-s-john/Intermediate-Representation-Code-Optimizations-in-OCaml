@@ -41,6 +41,7 @@ module Poly : Poly_intf = struct
     go root;
     Hash_queue.to_list queue
 
+  let fold (t : ('key, 'node) t) ~(init : 'acc) ~f = reverse_postorder t |> List.fold ~init ~f
   let nodes { map; _ } = Hashtbl.data map |> List.map ~f:(fun { node; _ } -> node)
   let keys { map; _ } = Hashtbl.keys map
   let root { root; _ } = root

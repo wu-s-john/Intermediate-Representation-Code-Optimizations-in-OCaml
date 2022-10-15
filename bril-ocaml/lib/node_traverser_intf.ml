@@ -52,4 +52,5 @@ module type Poly_intf = sig
   val map_inplace : ('key, 'node) t -> f:('node -> 'node) -> unit
   val update : ('key, 'node) t -> 'node -> unit
   val edges : ('key, 'node) t -> ('key * 'key) list
+  val fold : ('key, 'node) t -> init:'acc -> f:('acc -> 'node -> 'acc) -> 'acc
 end

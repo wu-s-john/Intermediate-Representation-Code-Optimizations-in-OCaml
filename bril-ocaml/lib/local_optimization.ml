@@ -9,9 +9,7 @@ let rec dead_code_elimination (block : 'a Block.t) : 'a Block.t =
       block.instrs
       ~init:([], String.Map.empty)
       ~f:(fun index (acc_dead_indices, unused_variables) instr ->
-        let used_variables =
-          Instruction.used_vars (instr :> [ Instruction.normal | Instruction.control ])
-        in
+        let used_variables = Instruction.used_vars (instr :> Instruction.t) in
         let new_unused_variables = Set.fold used_variables ~init:unused_variables ~f:Map.remove in
         match Instruction.dest instr with
         | None -> (acc_dead_indices, new_unused_variables)
@@ -28,8 +26,7 @@ let rec dead_code_elimination (block : 'a Block.t) : 'a Block.t =
     |> fun (acc_dead_indices, unused_variables) ->
     let used_terminal_instruction_var =
       match block.terminal with
-      | `Control instr ->
-        Instruction.used_vars (instr :> [ Instruction.normal | Instruction.control ])
+      | `Control instr -> Instruction.used_vars (instr :> Instruction.t)
       | _ -> String.Set.empty
     in
     ( acc_dead_indices,
@@ -128,14 +125,14 @@ module LVN_container = struct
     | `Binary { dest; typ = _; op; arg1; arg2 } ->
       Expr { expression = `Binary (arg1, op, arg2); variable = dest }
     | `Unary { dest; typ = _; op; arg } ->
-      ( match op with
+      (match op with
       | `Not -> Expr { expression = `Not arg; variable = dest }
-      | `Id -> Delete (Some { original = arg; dest }) )
+      | `Id -> Delete (Some { original = arg; dest }))
     | `Nop -> Delete None
     | `Const { dest; value } ->
-      ( match value with
+      (match value with
       | `Int value -> Expr { expression = `Int value; variable = dest }
-      | `Bool value -> Expr { expression = `Bool value; variable = dest } )
+      | `Bool value -> Expr { expression = `Bool value; variable = dest })
     | (`Call _ | `Print _) as instr -> Unable_to_optimize instr
 
   let remove_reference_in_expression (t : t) (variable : string) : unit =
@@ -169,7 +166,7 @@ module LVN_container = struct
       printf !"\nPrinting variable that has already been added";
       Hashtbl.remove t.var_expr_map var;
       remove_reference_in_expression t var;
-      Hashtbl.add_exn t.var_expr_map ~key:var ~data )
+      Hashtbl.add_exn t.var_expr_map ~key:var ~data)
     else Hashtbl.add_exn t.var_expr_map ~key:var ~data;
     match data with
     | `Expression expression -> Hashtbl.add_exn t.expr_var_map ~key:expression ~data:var
@@ -195,12 +192,12 @@ module LVN_container = struct
       match instr with
       | `Unary { op; dest; typ; arg } ->
         let arg = get_original_variable t arg in
-        ( match op with
+        (match op with
         | `Not ->
-          ( match compute_normalized_expr t arg with
+          (match compute_normalized_expr t arg with
           | `Bool value -> `Const { dest; value = `Bool (not value) }
-          | _ -> `Unary { op; dest; typ; arg } )
-        | `Id -> `Unary { op; dest; typ; arg } )
+          | _ -> `Unary { op; dest; typ; arg })
+        | `Id -> `Unary { op; dest; typ; arg })
       | `Const { dest; value } -> `Const { dest; value }
       | `Binary { dest; typ; op; arg1; arg2 } as binary_instruction ->
         let arg1 = get_original_variable t arg1 in
@@ -214,7 +211,7 @@ module LVN_container = struct
           arg2
           normalized_arg1
           normalized_arg2;
-        ( match (normalized_arg1, normalized_arg2, op) with
+        (match (normalized_arg1, normalized_arg2, op) with
         | (`Int value1, `Int value2, `Add) -> `Const { dest; value = `Int (value1 + value2) }
         | (`Int value1, `Int value2, `Sub) -> `Const { dest; value = `Int (value1 - value2) }
         | (`Int value1, `Int value2, `Mul) -> `Const { dest; value = `Int (value1 * value2) }
@@ -241,18 +238,18 @@ module LVN_container = struct
         | (_, _, `Add)
         | (_, _, `Mul) ->
           `Binary { dest; typ; op; arg1 = String.min arg1 arg2; arg2 = String.max arg1 arg2 }
-        | (_, _, _) -> `Binary { dest; typ; op; arg1; arg2 } )
+        | (_, _, _) -> `Binary { dest; typ; op; arg1; arg2 })
       | (`Nop | `Print _ | `Call _) as instr -> instr
     in
     printf !"\nOptimized Instruction %{sexp:Instruction.normal}" optimized_instruction;
     match to_normalized_expression optimized_instruction with
     | Expr { expression; variable } ->
-      ( match Hashtbl.find t.expr_var_map expression with
+      (match Hashtbl.find t.expr_var_map expression with
       | None ->
         add_var_expr t variable (`Expression expression);
         printf !"\nAdding instruction %{sexp:Instruction.normal}" optimized_instruction;
         Queue.enqueue t.optimized_instructions optimized_instruction
-      | Some original_name -> add_var_expr t variable (`Reference original_name) )
+      | Some original_name -> add_var_expr t variable (`Reference original_name))
     | Delete (Some { original; dest }) ->
       Hashtbl.update t.var_expr_map dest ~f:(fun _ -> `Reference original)
     | Delete None -> ()
@@ -341,19 +338,34 @@ module String_shit = struct
   let find_suffix (s1 : string) (s2 : string) : string =
     let min_length = Int.min (String.length s1) (String.length s2) in
     let range = Sequence.init min_length ~f:succ in
-    let found_index = Sequence.find range ~f:(fun i -> not @@ Char.equal s1.[String.length s1 - i] s2.[String.length s2 - i]) in
+    let found_index =
+      Sequence.find range ~f:(fun i ->
+          not @@ Char.equal s1.[String.length s1 - i] s2.[String.length s2 - i])
+    in
     String.suffix s1 (Option.value found_index ~default:min_length)
 
-  let get_unique_char (indices: int list): int option = 
-      match indices with
-      | [index] -> Some index
-      | _ -> None
-  let find_unique_char (s1: string) (s2: string): (int * int) = 
-      let chars1 = Char.Table.filter_map ~f:(get_unique_char) @@ Char.Table.of_alist_multi @@ List.mapi (String.to_list s1) ~f:(fun i c -> (c, i)) in
-      let chars2 = Char.Table.filter_map ~f:(get_unique_char) @@ Char.Table.of_alist_multi @@ List.mapi (String.to_list s2) ~f:(fun i c -> (c, i)) in
-      match Set.min_elt @@ Set.inter (Char.Set.of_list @@ Hashtbl.keys chars1) (Char.Set.of_list @@ Hashtbl.keys chars2) with
-      | None -> (-1, -1)
-      | Some c -> (Hashtbl.find_exn chars1 c, Hashtbl.find_exn chars2 c) 
-      
+  let get_unique_char (indices : int list) : int option =
+    match indices with
+    | [ index ] -> Some index
+    | _ -> None
 
+  let find_unique_char (s1 : string) (s2 : string) : int * int =
+    let chars1 =
+      Char.Table.filter_map ~f:get_unique_char
+      @@ Char.Table.of_alist_multi
+      @@ List.mapi (String.to_list s1) ~f:(fun i c -> (c, i))
+    in
+    let chars2 =
+      Char.Table.filter_map ~f:get_unique_char
+      @@ Char.Table.of_alist_multi
+      @@ List.mapi (String.to_list s2) ~f:(fun i c -> (c, i))
+    in
+    match
+      Set.min_elt
+      @@ Set.inter
+           (Char.Set.of_list @@ Hashtbl.keys chars1)
+           (Char.Set.of_list @@ Hashtbl.keys chars2)
+    with
+    | None -> (-1, -1)
+    | Some c -> (Hashtbl.find_exn chars1 c, Hashtbl.find_exn chars2 c)
 end

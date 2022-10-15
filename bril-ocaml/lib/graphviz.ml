@@ -3,19 +3,16 @@ open Core
 type ('key, 'node) t = {
   render_key : 'key -> string;
   render_node : 'node -> string;
+  get_key : 'node -> 'key;
 }
 
-let create ~render_key ~render_node = { render_key; render_node }
+let create ~render_key ~render_node ~get_key = { render_key; render_node; get_key }
 
-let map
-    ~(contra_f_key : 'key_out -> 'key_in)
-    ~(contra_f_node : 'node_out -> 'node_in)
-    (t : ('key_in, 'node_in) t)
-    : ('key_out, 'node_out) t
-  =
+let map ~(contra_f_node : 'node_out -> 'node_in) (t : ('key, 'node_in) t) : ('key, 'node_out) t =
   {
-    render_key = (fun key -> t.render_key (contra_f_key key));
+    render_key = (fun key -> t.render_key key);
     render_node = (fun node -> t.render_node (contra_f_node node));
+    get_key = (fun node -> t.get_key @@ contra_f_node node);
   }
 
 type label = string
@@ -45,7 +42,6 @@ let render_node file_name { nodes; edges } =
 
 let draw
     (type key node)
-    (module Node : Node.S with type t = node and type Key.t = key)
     (file_name : string)
     (traverser : (key, node) Node_traverser.Poly.t)
     (t : (key, node) t)
@@ -57,6 +53,6 @@ let draw
   let nodes =
     Node_traverser.Poly.nodes traverser
     |> List.map ~f:(fun node ->
-           { label = t.render_node node; description = t.render_key (Node.get_key node) })
+           { label = t.render_node node; description = t.render_key (t.get_key node) })
   in
   render_node file_name { nodes; edges }

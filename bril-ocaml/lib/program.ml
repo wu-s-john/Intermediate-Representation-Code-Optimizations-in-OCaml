@@ -1,13 +1,13 @@
 open! Core
 
-type arg = string [@@deriving compare, equal, sexp, hash]
-type label = string [@@deriving compare, equal, sexp, hash]
+type arg = string [@@deriving compare, equal, sexp, hash, to_yojson]
+type label = string [@@deriving compare, equal, sexp, hash, to_yojson]
 
 type const = {
   dest : string;
   value : [ `Int of int | `Bool of bool ];
 }
-[@@deriving compare, equal, sexp, hash]
+[@@deriving compare, equal, sexp, hash, to_yojson, yojson]
 
 module Op = struct
   module Binary = struct
@@ -24,7 +24,7 @@ module Op = struct
       | `And
       | `Or
       ]
-    [@@deriving sexp, compare, hash, eq]
+    [@@deriving sexp, compare, hash, eq, to_yojson]
 
     let to_symbol = function
       | `Add -> "+"
@@ -49,7 +49,7 @@ module Op = struct
       [ `Not
       | `Id
       ]
-    [@@deriving sexp, compare, hash, eq]
+    [@@deriving sexp, compare, hash, eq, to_yojson]
   end
 end
 
@@ -60,7 +60,7 @@ type binary = {
   arg1 : arg;
   arg2 : arg;
 }
-[@@deriving sexp, compare, hash, eq]
+[@@deriving sexp, compare, hash, eq, to_yojson]
 
 type unary = {
   dest : string;
@@ -68,7 +68,7 @@ type unary = {
   op : Op.Unary.t;
   arg : arg;
 }
-[@@deriving sexp, compare, hash, eq]
+[@@deriving sexp, compare, hash, eq, to_yojson]
 
 type br = {
   arg : arg;
@@ -81,7 +81,7 @@ type dest = {
   dest : string;
   typ : Type.t;
 }
-[@@deriving compare, equal, sexp, hash]
+[@@deriving compare, equal, sexp, hash, to_yojson]
 
 type call = {
   func_name : string;
@@ -407,7 +407,11 @@ module Instruction = struct
           value = None;
         }
 
-  let used_vars (instr : [ normal | control ]) : String.Set.t =
+  let to_yojson = Fn.compose Json_repr.Instruction.to_yojson to_json_repr
+  let normal_to_yojson (normal_instr : normal) = to_yojson (normal_instr :> t)
+  let control_to_yojson (control_instr : control) = to_yojson (control_instr :> t)
+
+  let used_vars (instr : t) : String.Set.t =
     match instr with
     | `Const _ -> String.Set.empty
     | `Binary { arg1; arg2; _ } -> String.Set.of_list [ arg1; arg2 ]
@@ -418,6 +422,7 @@ module Instruction = struct
     | `Br { arg; _ } -> String.Set.singleton arg
     | `Ret arg -> String.Set.of_list @@ Option.to_list arg
     | `Jmp _ -> String.Set.empty
+    | `Label _ -> String.Set.empty
 
   let dest (instr : normal) : string option =
     match instr with
@@ -433,17 +438,30 @@ module type Meta_intf = sig
 end
 
 module Block = struct
+  type terminal_instr =
+    [ `Control of Instruction.control
+    | `NextLabel of label
+    | `Terminal
+    ]
+  [@@deriving compare, equal, sexp, hash, to_yojson]
+
   type 'meta t = {
     meta : 'meta;
     label : label option;
     instrs : Instruction.normal list;
-    terminal : [ `Control of Instruction.control | `NextLabel of label | `Terminal ];
+    terminal : terminal_instr;
   }
-  [@@deriving compare, equal, sexp, hash]
+  [@@deriving compare, equal, sexp, hash, to_yojson]
+
+  let convert_terminal_instr_to_instr (terminal_instr : terminal_instr) : Instruction.t option =
+    match terminal_instr with
+    | `Control control_instr -> Some (control_instr :> Instruction.t)
+    | `NextLabel label -> Some (`Label label :> Instruction.t)
+    | `Terminal -> None
 
   module Key = struct
     module T = struct
-      type t = string option [@@deriving sexp, compare, hash]
+      type t = string option [@@deriving sexp, compare, hash, yojson]
     end
 
     include T
@@ -475,16 +493,22 @@ module Block = struct
         | `Terminal -> []);
       ]
 
-  let variable_defintions { instrs; _ } : String.Set.t =
+  let variable_definitions { instrs; _ } : String.Set.t =
     List.bind instrs ~f:(fun instr -> Option.to_list @@ Instruction.dest instr)
     |> String.Set.of_list
 
   let used_variables { instrs; _ } : String.Set.t =
     String.Set.union_list
-      (List.map instrs ~f:(fun instr ->
-           Instruction.used_vars (instr :> [ Instruction.normal | Instruction.control ])))
+      (List.map instrs ~f:(fun instr -> Instruction.used_vars (instr :> Instruction.t)))
 
   let map ({ meta; _ } as t : 'a t) ~f : 'b t = { t with meta = f meta }
+
+  let all_instrs ({ instrs; terminal; _ } : 'meta t) : Instruction.t list =
+    List.concat
+    @@ [
+         List.map instrs ~f:(fun instr -> (instr :> Instruction.t));
+         Option.to_list @@ convert_terminal_instr_to_instr terminal;
+       ]
 end
 
 module type Monomorphic_block_intf = sig
@@ -492,20 +516,18 @@ module type Monomorphic_block_intf = sig
   type t = meta Block.t [@@deriving sexp, compare, hash]
 
   include Node.S with type t := t
-
-  val to_json_repr : meta Block.t -> Json_repr.Instruction.t list
 end
 
 (* This is useful to remove have Block module without any polymorphic type parameters *)
 module Make_monomorphic_block (Meta : Meta_intf) :
-  Monomorphic_block_intf with type meta := Meta.t and module Key = Block.Key = struct
+  Monomorphic_block_intf with type meta = Meta.t and module Key = Block.Key = struct
   type t = Meta.t Block.t [@@deriving sexp, compare, hash]
+  type meta = Meta.t
 
   module Key = Block.Key
 
   let get_key t = Block.get_key t
   let children t = Block.children t
-  let to_json_repr t = Block.to_json_repr t
 end
 
 module Block_unit = Make_monomorphic_block (Unit)
@@ -600,6 +622,10 @@ let of_json_repr ({ functions } : Json_repr.Program.t) : (t, Json_repr.Error.t) 
 let to_json_repr ({ functions } : t) : Json_repr.Program.t =
   { Json_repr.Program.functions = List.map ~f:Function.to_json_repr functions }
 
+let to_yojson (program : t) : Yojson.Safe.t = to_json_repr program |> Json_repr.Program.to_yojson
+
 let run_local_optimizations ({ functions } : t) ~(f : unit Block.t -> unit Block.t) : t =
   List.iter functions ~f:(fun func -> Node_traverser.Poly.map_inplace func.blocks ~f);
   { functions }
+
+let head_function_blocks_exn (t : t) = (List.hd_exn t.functions).blocks
