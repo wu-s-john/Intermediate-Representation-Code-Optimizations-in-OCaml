@@ -53,6 +53,9 @@ let draw
   let nodes =
     Node_traverser.Poly.nodes traverser
     |> List.map ~f:(fun node ->
-           { label = t.render_node node; description = t.render_key (t.get_key node) })
+           { label = t.render_key (t.get_key node); description = t.render_node node })
   in
   render_node file_name { nodes; edges }
+
+let render_instructions (instrs : Program.Instruction.t list) : string =
+  String.concat ~sep:"\\n" (List.map ~f:Program.Instruction.to_string instrs)

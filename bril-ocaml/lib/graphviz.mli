@@ -10,3 +10,4 @@ val create
 
 val map : contra_f_node:('node_out -> 'node_in) -> ('key, 'node_in) t -> ('key, 'node_out) t
 val draw : string -> ('key, 'node) Node_traverser.Poly.t -> ('key, 'node) t -> unit Deferred.t
+val render_instructions : Program.Instruction.t list -> string

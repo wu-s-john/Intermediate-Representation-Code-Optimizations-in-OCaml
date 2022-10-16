@@ -1,4 +1,5 @@
 open Core
+open Async
 
 module type Yojson_enum = sig
   type t
@@ -170,7 +171,7 @@ module Test = struct
     | Error e -> failwithf !"Could not print this error: %s" e ()
 
 
-  (* let%test_unit "serialize and deserialize json files" =
+  let%test_unit "serialize and deserialize json files" =
     Backtrace.elide := false;
     Thread_safe.block_on_async_exn
     @@ fun () ->
@@ -185,5 +186,5 @@ module Test = struct
               | Error e -> failwithf !"Could not print this error: %s" e ()
             in
             let serialized_program = Program.to_yojson program in
-            Yojson.Safe.pretty_print Format.std_formatter serialized_program)) *)
+            Yojson.Safe.pretty_print Format.std_formatter serialized_program))
 end

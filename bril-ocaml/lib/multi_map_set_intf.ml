@@ -18,4 +18,5 @@ module type S = sig
   val empty : t
   val remove : t -> Key.t -> t
   val get : t -> Key.t -> Value.Set.t
+  val of_alist : (Key.t * Value.t) list -> t
 end

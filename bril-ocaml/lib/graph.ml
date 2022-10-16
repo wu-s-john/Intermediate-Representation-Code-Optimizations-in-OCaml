@@ -18,7 +18,14 @@ type 'key dfs_tree_result = {
   arrival_number : int;
 }
 
-module Graph (Node : Node.S) = struct
+module type Renderable_key = sig
+  type t [@@deriving sexp, to_yojson]
+
+  include Node.Key with type t := t
+  include Renderable.S with type t := t
+end
+
+module Graph (Key : Renderable_key) (Node : Node.S with module Key = Key) = struct
   module Traverser = Node_traverser.Poly
 
   type t = (Node.Key.t, Node.t) Node_traverser.Poly.t
@@ -206,21 +213,23 @@ module Graph (Node : Node.S) = struct
       add_ancestor_trail trie (child :: rest)
     | _ -> ()
 
-  let dominator_tree (t : t) (dominator_set : dominator_set)
-      : (Node.Key.t, Node.Key.Hash_set.t) Hashtbl.t
-    =
+  (*  The dominator tree can be defined as key -> children *)
+
+  module Dominator_tree = Multi_map_set.Make (Node.Key) (Node.Key)
+
+  let dominator_tree (t : t) (dominator_set : dominator_set) : Dominator_tree.t =
     let tree = dfs_tree t in
-    let sorted_dominator_set : (Node.Key.t, Node.Key.t list) Hashtbl.t =
+    let key_to_immediate_dominator : (Node.Key.t, Node.Key.t option) Hashtbl.t =
       Hashtbl.map dominator_set ~f:(fun dominators ->
           Set.to_list dominators
-          |> List.map ~f:(fun dominator ->
-                 ((Hashtbl.find_exn tree dominator).arrival_number, dominator))
-          |> List.sort
-               ~compare:(Comparable.lift Int.compare ~f:(fun (arrival_number, _) -> arrival_number))
-          |> List.map ~f:(fun (_, dominator_list) -> dominator_list))
+          |> List.max_elt
+               ~compare:
+                 (Comparable.lift Int.compare ~f:(fun dominator ->
+                      (Hashtbl.find_exn tree dominator).arrival_number)))
     in
-    let dominator_trie : (Node.Key.t, Node.Key.Hash_set.t) Hashtbl.t = Node.Key.Table.create () in
-    Hashtbl.iteri sorted_dominator_set ~f:(fun ~key ~data:dominator_sequence ->
-        add_ancestor_trail dominator_trie @@ List.append dominator_sequence [ key ]);
-    dominator_trie
+    let dominator_to_children =
+      List.filter_map (Hashtbl.to_alist key_to_immediate_dominator) ~f:(fun (key, dominator) ->
+          Option.map dominator ~f:(fun dominator -> (dominator, key)))
+    in
+    Dominator_tree.of_alist dominator_to_children
 end

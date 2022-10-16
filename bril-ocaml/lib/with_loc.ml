@@ -51,6 +51,13 @@ module Def = struct
     | `Call { dest; func_name; args } ->
       Option.map dest ~f:(fun dest -> `Call { dest; func_name; args })
     | _ -> None
+
+  let to_program_instruction (t : t) : Program.Instruction.t =
+    match t.instruction with
+    | `Const const -> `Const const
+    | `Binary binary -> `Binary binary
+    | `Unary unary -> `Unary unary
+    | `Call { dest; func_name; args } -> `Call { dest = Some dest; func_name; args }
 end
 
 module Instr = struct
@@ -64,7 +71,7 @@ module Instr = struct
   include Comparable.Make (T)
 
   let declared_variable ({ instruction; _ } : t) : string option =
-  match instruction with
+    match instruction with
     | `Const { dest; _ } -> Some dest
     | `Binary { dest; _ } -> Some dest
     | `Unary { dest; _ } -> Some dest

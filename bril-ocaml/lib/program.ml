@@ -50,6 +50,10 @@ module Op = struct
       | `Id
       ]
     [@@deriving sexp, compare, hash, eq, to_yojson]
+
+    let to_string = function
+      | `Not -> "not"
+      | `Id -> "id"
   end
 end
 
@@ -431,6 +435,36 @@ module Instruction = struct
     | `Unary { dest; _ } ->
       Some dest
     | _ -> None
+
+  let to_string (t : t) : string =
+    match t with
+    | `Const { dest; value } ->
+      let serialized_val =
+        match value with
+        | `Int int_value -> Int.to_string int_value
+        | `Bool bool_value -> Bool.to_string bool_value
+      in
+      sprintf "const %s = %s" dest serialized_val
+    | `Binary { dest; typ; op; arg1; arg2 } ->
+      sprintf "%s: %s = %s %s %s" dest (Type.to_string typ) arg1 (Op.Binary.to_symbol op) arg2
+    | `Unary { dest; typ; op; arg } ->
+      sprintf "%s: %s = %s %s" dest (Type.to_string typ) (Op.Unary.to_string op) arg
+    | `Print args -> sprintf "print %s" (String.concat ~sep:" " args)
+    | `Call { args; func_name; dest } ->
+      let left_statement =
+        match dest with
+        | Some { dest; typ } -> sprintf "%s: %s =" (Type.to_string typ) dest
+        | None -> ""
+      in
+      sprintf "%scall @%s %s" left_statement func_name (String.concat ~sep:" " args)
+    | `Nop -> "nop"
+    | `Br { arg; true_label; false_label } -> sprintf "br %s .%s .%s" arg true_label false_label
+    | `Ret arg ->
+      (match arg with
+      | Some arg -> sprintf "ret %s" arg
+      | None -> "ret")
+    | `Jmp label -> sprintf "jmp .%s" label
+    | `Label label -> sprintf ".%s:" label
 end
 
 module type Meta_intf = sig
@@ -465,6 +499,14 @@ module Block = struct
     end
 
     include T
+
+    let uuid_root =
+      let rand_suffix = Uuid.to_string @@ Uuid.create_random Random.State.default in
+      sprintf "root_%s" (String.prefix rand_suffix 4)
+
+    (* HACK: This avoids potential conflicts for graphviz. Labels in language my be called this *)
+    let render (key : t) = sprintf "\"%s\"" (Option.value ~default:uuid_root key)
+
     include Hashable.Make (T)
     include Comparable.Make (T)
   end
@@ -509,6 +551,9 @@ module Block = struct
          List.map instrs ~f:(fun instr -> (instr :> Instruction.t));
          Option.to_list @@ convert_terminal_instr_to_instr terminal;
        ]
+
+  let render (t : 'meta t) : string =
+    String.concat ~sep:"\\n" (List.map ~f:Instruction.to_string (all_instrs t))
 end
 
 module type Monomorphic_block_intf = sig
@@ -629,3 +674,9 @@ let run_local_optimizations ({ functions } : t) ~(f : unit Block.t -> unit Block
   { functions }
 
 let head_function_blocks_exn (t : t) = (List.hd_exn t.functions).blocks
+
+let select_block_exn (t : t) function_name =
+  let funct =
+    List.find t.functions ~f:(fun func -> String.equal func.name function_name) |> Option.value_exn
+  in
+  funct.blocks

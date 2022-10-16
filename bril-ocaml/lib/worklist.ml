@@ -81,6 +81,9 @@ struct
         ~f:(fun node -> { node; in_ = Ops.zero; out = Ops.zero })
     in
     let work_list = Node.Key.Hash_queue.create () in
+    let nodes = Node_traverser.Poly.reverse_postorder traverser_with_data in
+    List.iter nodes ~f:(fun node ->
+        Hash_queue.enqueue_back_exn work_list (Node.get_key node.node) (Node.get_key node.node));
     let t = { traverser = traverser_with_data; work_list } in
     f t;
     traverser_with_data

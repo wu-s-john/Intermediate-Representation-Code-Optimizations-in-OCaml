@@ -34,7 +34,6 @@ let rec dead_code_elimination (block : 'a Block.t) : 'a Block.t =
           not @@ Set.mem used_terminal_instruction_var name) )
   in
   let dead_indices = List.append initial_dead_indices (Map.data unused_defs) in
-  printf !"Dead indices %{sexp:int list}\n" dead_indices;
   if List.is_empty dead_indices then block
   else
     let dead_indices = Int.Set.of_list dead_indices in
@@ -163,7 +162,6 @@ module LVN_container = struct
     =
     if Hashtbl.mem t.var_expr_map var then (
       (* The variable is redefined at this point if it already exists in this var_expr_map. So, remove all current references to it *)
-      printf !"\nPrinting variable that has already been added";
       Hashtbl.remove t.var_expr_map var;
       remove_reference_in_expression t var;
       Hashtbl.add_exn t.var_expr_map ~key:var ~data)
@@ -326,46 +324,5 @@ module Test = struct
              ~expected:(dir ^/ expected)
              ~f:local_value_numbering)
     |> Deferred.ignore_m *)
-end
 
-module String_shit = struct
-  let find_prefix (s1 : string) (s2 : string) : string =
-    let min_length = Int.min (String.length s1) (String.length s2) in
-    let range = Sequence.init min_length ~f:succ in
-    let found_index = Sequence.find range ~f:(fun i -> not @@ Char.equal s1.[i] s2.[i]) in
-    String.prefix s1 (Option.value found_index ~default:min_length)
-
-  let find_suffix (s1 : string) (s2 : string) : string =
-    let min_length = Int.min (String.length s1) (String.length s2) in
-    let range = Sequence.init min_length ~f:succ in
-    let found_index =
-      Sequence.find range ~f:(fun i ->
-          not @@ Char.equal s1.[String.length s1 - i] s2.[String.length s2 - i])
-    in
-    String.suffix s1 (Option.value found_index ~default:min_length)
-
-  let get_unique_char (indices : int list) : int option =
-    match indices with
-    | [ index ] -> Some index
-    | _ -> None
-
-  let find_unique_char (s1 : string) (s2 : string) : int * int =
-    let chars1 =
-      Char.Table.filter_map ~f:get_unique_char
-      @@ Char.Table.of_alist_multi
-      @@ List.mapi (String.to_list s1) ~f:(fun i c -> (c, i))
-    in
-    let chars2 =
-      Char.Table.filter_map ~f:get_unique_char
-      @@ Char.Table.of_alist_multi
-      @@ List.mapi (String.to_list s2) ~f:(fun i c -> (c, i))
-    in
-    match
-      Set.min_elt
-      @@ Set.inter
-           (Char.Set.of_list @@ Hashtbl.keys chars1)
-           (Char.Set.of_list @@ Hashtbl.keys chars2)
-    with
-    | None -> (-1, -1)
-    | Some c -> (Hashtbl.find_exn chars1 c, Hashtbl.find_exn chars2 c)
 end

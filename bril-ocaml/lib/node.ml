@@ -1,12 +1,14 @@
 open Core
 
-module type S = sig
-  module Key : sig
-    type t [@@deriving sexp, compare, hash]
+module type Key = sig
+  type t [@@deriving sexp, compare, hash]
 
-    include Comparable.S with type t := t
-    include Hashable.S with type t := t
-  end
+  include Comparable.S with type t := t
+  include Hashable.S with type t := t
+end
+
+module type S = sig
+  module Key : Key
 
   type t
 

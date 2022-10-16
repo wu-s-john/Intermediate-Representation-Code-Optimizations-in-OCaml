@@ -3,7 +3,17 @@ open Core
    
 Namely, you go through each block from it's top and see if a definition is used for an instruction *)
 
-module Make (Block : Program.Monomorphic_block_intf) = struct
+module type Renderable_key = sig
+  type t [@@deriving sexp]
+
+  include Node.Key with type t := t
+  include Renderable.S with type t := t
+end
+
+module Make
+    (Block : Program.Monomorphic_block_intf)
+    (Key_render : Renderable_key with type t = Block.Key.t) =
+struct
   module Reaching_def_ops = struct
     type data = Var_def_map.t
 
@@ -40,14 +50,24 @@ module Make (Block : Program.Monomorphic_block_intf) = struct
 
     module Key = Block.Key
 
-    let hi = [%show: string option]
-    let render_key (key : Key.t) = Block.Key.sexp_of_t key |> Sexp.to_string
+    let render_key (key : Key.t) = Key_render.render key
+
+    let render_defs (map : Var_def_map.t) =
+      Map.data map
+      |> List.map ~f:Set.to_list
+      |> List.concat
+      |> List.map
+           ~f:(fun ({ With_loc.instruction = _; label; instr_line } as instruction_with_loc) ->
+             sprintf
+               "%s-%d: %s"
+               (Option.value ~default:"ROOT" label)
+               instr_line
+               (Program.Instruction.to_string
+                  (With_loc.Def.to_program_instruction instruction_with_loc)))
+      |> String.concat ~sep:"\\n"
 
     let render_node ({ out; in_; _ } : t) : string =
-      Core.sprintf
-        "In:\n%s\n==============\nOut:\n%s"
-        (Var_def_map.to_yojson in_ |> Yojson.Safe.to_string)
-        (Var_def_map.to_yojson out |> Yojson.Safe.to_string)
+      Core.sprintf "In:\\n%s\\n==============\\nOut:\\n%s" (render_defs in_) (render_defs out)
 
     let get_key ({ node = block; _ } : t) : Key.t = Block.get_key block
     let graphviz = Graphviz.create ~render_key ~render_node ~get_key
@@ -112,7 +132,13 @@ module Test = struct
     Afterwards, we run the use def chain algorithm and compare the output.
   *)
 
-  module Reaching_def = Make (Program.Block_unit)
+  module Reaching_def = Make (Program.Block_unit) (Program.Block.Key)
+
+  let graphviz =
+    let render_key = Program.Block.Key.render in
+    let render_node = Program.Block.render in
+    let get_key = Program.Block.get_key in
+    Graphviz.create ~render_key ~render_node ~get_key
 
   let%test_unit "Reaching Definitions work for one example" =
     let open Deferred.Let_syntax in
@@ -122,5 +148,24 @@ module Test = struct
         let program : Program.t = deserialized_program in
         let node_traverser = Program.head_function_blocks_exn program in
         let reaching_def_graph = Reaching_def.run node_traverser in
-        Graphviz.draw "/Users/johnwu/code/bril/reaching_def.dot" reaching_def_graph Reaching_def.Reaching_def_block.graphviz)
+        Graphviz.draw
+          "/Users/johnwu/code/bril/reaching_def.dot"
+          reaching_def_graph
+          Reaching_def.Reaching_def_block.graphviz)
+
+  let%test_unit "Reaching Definitions work for euclidian example" =
+    let open Deferred.Let_syntax in
+    let filename : string = "/Users/johnwu/code/bril/benchmarks/euclid.bril" in
+    Thread_safe.block_on_async_exn (fun () ->
+        let%bind deserialized_program = Test_util.read_bril_exn ~filename in
+        let program : Program.t = deserialized_program in
+        let node_traverser = Program.select_block_exn program "gcd" in
+        let reaching_def_graph = Reaching_def.run node_traverser in
+        let%bind () =
+          Graphviz.draw "/Users/johnwu/code/bril/gcd_output.dot" node_traverser graphviz
+        in
+        Graphviz.draw
+          "/Users/johnwu/code/bril/gcd_reachng_def.dot"
+          reaching_def_graph
+          Reaching_def.Reaching_def_block.graphviz)
 end

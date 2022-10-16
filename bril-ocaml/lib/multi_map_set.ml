@@ -38,4 +38,7 @@ module Make (Key : Elem) (Value : Elem) : S with module Key = Key and module Val
   let empty = Key.Map.empty
   let remove (t : t) (key : Key.t) = Map.remove t key
   let get (t : t) (key : Key.t) = Map.find t key |> Option.value ~default:Value.Set.empty
+
+  let of_alist (list : (Key.t * Value.t) list) =
+    Key.Map.of_alist_multi list |> Map.map ~f:Value.Set.of_list
 end
