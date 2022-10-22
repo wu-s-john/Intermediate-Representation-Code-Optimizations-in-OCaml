@@ -23,7 +23,7 @@ struct
       let removed_def_map = Var_def_map.remove var_def_map declared_variable in
       Var_def_map.upsert removed_def_map declared_variable def
 
-    let zero = Var_def_map.empty
+    let zero _ = Var_def_map.empty
 
     let merge (pred_outputs : data list) : data =
       List.fold_left pred_outputs ~init:Var_def_map.empty ~f:Var_def_map.merge

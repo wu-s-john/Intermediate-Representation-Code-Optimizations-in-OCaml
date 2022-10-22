@@ -7,7 +7,7 @@ module type Node_operations_intf = sig
 
   val transform : t -> data -> data
   val merge : data list -> data
-  val zero : data
+  val zero : t -> data
 end
 
 type ('node, 'flow_value) flow_node = {
@@ -78,7 +78,7 @@ struct
       Node_traverser.Poly.inv_map
         ~contra_f:(fun { node; _ } -> node)
         traverser
-        ~f:(fun node -> { node; in_ = Ops.zero; out = Ops.zero })
+        ~f:(fun node -> { node; in_ = Ops.zero node; out = Ops.zero node })
     in
     let work_list = Node.Key.Hash_queue.create () in
     let nodes = Node_traverser.Poly.reverse_postorder traverser_with_data in

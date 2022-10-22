@@ -644,9 +644,7 @@ module Function = struct
     let%bind parsed_instrs = Result.all @@ List.map instrs ~f:Instruction.of_json_repr in
     let block_list = to_basic_blocks_helper None [] parsed_instrs in
     let%map traverser =
-      Node_traverser.Poly.of_alist
-        (module Block_unit)
-        (List.map block_list ~f:(fun block -> (Block.get_key block, block)))
+      Node_traverser.Poly.of_list (module Block_unit) block_list
       |> Result.of_option ~error:`Bad_block_format
     in
     { name; args; blocks = traverser; typ }

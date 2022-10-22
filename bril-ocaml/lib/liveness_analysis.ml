@@ -6,7 +6,7 @@ module Make (Block : Program.Monomorphic_block_intf) = struct
 
     type data = Used_instructions.t
 
-    let zero = Used_instructions.empty
+    let zero _ = Used_instructions.empty
 
     let merge (child_inputs : data list) : data =
       List.fold_left child_inputs ~init:Used_instructions.empty ~f:Used_instructions.merge

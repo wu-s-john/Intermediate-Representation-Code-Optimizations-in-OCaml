@@ -1,11 +1,12 @@
 open Core
 include Multi_map_set_intf
 
-module Make (Key : Elem) (Value : Elem) : S with module Key = Key and module Value = Value = struct
+(* module Make (Key : Elem) (Value : Elem) : S with module Key = Key and module Value = Value = struct *)
+module Make (Key : Elem) (Value : Elem) = struct
   module Key = Key
   module Value = Value
 
-  type t = Value.Set.t Key.Map.t [@@deriving eq, sexp]
+  type t = Value.Set.t Key.Map.t [@@deriving eq, sexp, compare]
 
   let to_yojson (t : t) : Yojson.Safe.t =
     let result =
@@ -39,6 +40,23 @@ module Make (Key : Elem) (Value : Elem) : S with module Key = Key and module Val
   let remove (t : t) (key : Key.t) = Map.remove t key
   let get (t : t) (key : Key.t) = Map.find t key |> Option.value ~default:Value.Set.empty
 
-  let of_alist (list : (Key.t * Value.t) list) =
-    Key.Map.of_alist_multi list |> Map.map ~f:Value.Set.of_list
+  let to_alist (t : t) : (Key.t * Value.t) list =
+    Map.to_alist t
+    |> List.bind ~f:(fun (key, value_set) ->
+           Set.to_list value_set |> List.map ~f:(fun value -> (key, value))) 
+
+  let of_alist
+      (module Key_value : Value_with_key with type t = Value.t and type key = Key.t)
+      (list : (Key.t * Value.t) list)
+    =
+    let initial_set = Key.Map.of_alist_multi list |> Map.map ~f:Value.Set.of_list in
+    let domain =
+      List.map list ~f:(fun (_, value) -> Key_value.key value)
+      @ List.map list ~f:(fun (key, _) -> key)
+      |> Key.Set.of_list
+    in
+    Key.Set.fold domain ~init:initial_set ~f:(fun set key ->
+        match Map.add set ~key ~data:Value.Set.empty with
+        | `Ok new_set -> new_set
+        | `Duplicate -> set)
 end

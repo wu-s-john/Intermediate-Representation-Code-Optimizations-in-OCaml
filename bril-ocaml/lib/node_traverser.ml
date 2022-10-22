@@ -1,7 +1,7 @@
 open Core
 include Node_traverser_intf
 
-module Poly : Poly_intf = struct
+module Poly = struct
   type ('key, 'node) value = {
     predecessors : 'key Hash_set.t;
     node : 'node;
@@ -48,22 +48,22 @@ module Poly : Poly_intf = struct
 
   let compute_predecessor_map
       (type node key)
-      (module Node : Node_intf with type t = node and type Key.t = key)
-      (list : (key * node) list)
+      (module Node : Node.S with type t = node and type Key.t = key)
+      (list : node list)
       : (key, key Hash_set.t) Hashtbl.t
     =
     let map : Node.Key.Hash_set.t Node.Key.Table.t = Node.Key.Table.create () in
-    List.iter list ~f:(fun (key, node) ->
+    List.iter list ~f:(fun node ->
         List.iter (Node.children node) ~f:(fun child_key ->
             let child_predecessors =
               Hashtbl.find_or_add map child_key ~default:(fun () -> Node.Key.Hash_set.create ())
             in
-            Hash_set.add child_predecessors key));
+            Hash_set.add child_predecessors (Node.get_key node)));
     map
 
   let find_root
       (type node key)
-      (module Node : Node_intf with type t = node and type Key.t = key)
+      (module Node : Node.S with type t = node and type Key.t = key)
       (predecessors_map : (key, (key, node) value) Hashtbl.t)
       : Node.t option
     =
@@ -77,24 +77,20 @@ module Poly : Poly_intf = struct
     | [ node ] -> Some node
     | _ -> None
 
-  let of_alist
-      (type node key)
-      (module Node : Node_intf with type t = node and type Key.t = key)
-      list
-    =
+  let of_list (type node key) (module Node : Node.S with type t = node and type Key.t = key) list =
     let open Option.Let_syntax in
     let predecessors_map = compute_predecessor_map (module Node) list in
     let%bind map =
       match
         Node.Key.Table.create_mapped
           list
-          ~get_key:(fun (key, _) -> key)
-          ~get_data:(fun (key, value) ->
+          ~get_key:(fun node -> Node.get_key node)
+          ~get_data:(fun node ->
             {
               predecessors =
-                Hashtbl.find_or_add predecessors_map key ~default:(fun () ->
+                Hashtbl.find_or_add predecessors_map (Node.get_key node) ~default:(fun () ->
                     Node.Key.Hash_set.create ());
-              node = value;
+              node;
             })
       with
       | `Duplicate_keys _ -> None
@@ -103,9 +99,26 @@ module Poly : Poly_intf = struct
     let%map root = find_root (module Node) map in
     { map; root; children = Node.children; get_key = Node.get_key; hash_module = (module Node.Key) }
 
+  (* let of_alist
+      (type node)
+      (module Elem : Multi_map_set.Elem with type t = node)
+      (module Multi_map : Multi_map_set.S with type Key.t = node and type Value.t = node)
+      (multi_map : Multi_map.t)
+    =
+    failwith "To Implement" *)
+  let to_map
+      (type key witness)
+      (module Comparable : Comparable.S with type t = key and type comparator_witness = witness)
+      t
+      ~f
+    =
+    Hashtbl.to_alist t.map
+    |> List.map ~f:(fun (key, { node; _ }) -> (key, f node))
+    |> Comparable.Map.of_alist_exn
+
   let map
       (type node_in node_out key)
-      (module Node : Node_intf with type t = node_out and type Key.t = key)
+      (module Node : Node.S with type t = node_out and type Key.t = key)
       (t : (key, node_in) t)
       ~(f : node_in -> node_out)
       : (key, node_out) t

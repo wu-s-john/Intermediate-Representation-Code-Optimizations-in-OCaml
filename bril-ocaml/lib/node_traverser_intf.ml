@@ -1,3 +1,5 @@
+open Core
+
 module type S = sig
   type t
   type key
@@ -14,12 +16,6 @@ module type S = sig
   val edges : t -> (key * key) list
 end
 
-module type Node_intf = sig
-  include Node.S
-
-  val children : t -> Key.t list
-end
-
 module type Poly_intf = sig
   type ('key, 'node) t
 
@@ -30,13 +26,21 @@ module type Poly_intf = sig
   val keys : ('key, 'node) t -> 'key list
   val root : ('key, 'node) t -> 'node
 
-  val of_alist
-    :  (module Node_intf with type t = 'node and type Key.t = 'key) ->
-    ('key * 'node) list ->
+  val of_list
+    :  (module Node.S with type t = 'node and type Key.t = 'key) ->
+    'node list ->
     ('key, 'node) t option
 
+  (* val of_alist : ('key * 'key) list -> ('key, 'key) t *)
+
+  val to_map
+    :  (module Comparable.S with type t = 'key and type comparator_witness = 'witness) ->
+    ('key, 'node_in) t ->
+    f:('node_in -> 'node_out) ->
+    ('key, 'node_out, 'witness) Map.t
+
   val map
-    :  (module Node_intf with type t = 'node_out and type Key.t = 'key) ->
+    :  (module Node.S with type t = 'node_out and type Key.t = 'key) ->
     ('key, 'node_in) t ->
     f:('node_in -> 'node_out) ->
     ('key, 'node_out) t

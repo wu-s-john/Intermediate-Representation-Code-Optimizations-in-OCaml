@@ -59,3 +59,19 @@ let draw
 
 let render_instructions (instrs : Program.Instruction.t list) : string =
   String.concat ~sep:"\\n" (List.map ~f:Program.Instruction.to_string instrs)
+
+let draw_multimap
+    ~(file_name : string)
+    ~(render_key : 'key -> string)
+    (multi_map : ('key, ('key, 'comp) Set.t, 'comp) Map.t)
+  =
+  let edges =
+    Map.to_alist multi_map
+    |> List.bind ~f:(fun (src, dests) ->
+           Set.to_list dests |> List.map ~f:(fun dest -> (render_key src, render_key dest)))
+  in
+  let nodes =
+    Map.keys multi_map
+    |> List.map ~f:(fun node -> { label = render_key node; description = render_key node })
+  in
+  render_node file_name { nodes; edges }

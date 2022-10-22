@@ -22,86 +22,119 @@ module type Renderable_key = sig
   type t [@@deriving sexp, to_yojson]
 
   include Node.Key with type t := t
-  include Renderable.S with type t := t
 end
 
-module Graph (Key : Renderable_key) (Node : Node.S with module Key = Key) = struct
+module Make (Key : Renderable_key) (Node : Node.S with module Key = Key) = struct
   module Traverser = Node_traverser.Poly
 
   type t = (Node.Key.t, Node.t) Node_traverser.Poly.t
-  type dominator_set = (Node.Key.t, Node.Key.Set.t) Hashtbl.t
+  type dominator_set = Node.Key.Set.t Node.Key.Map.t [@@deriving sexp]
+
+  module Dominator_node = struct
+    type t = {
+      node : Node.t;
+      is_root : bool;
+      domain : Node.Key.Set.t;
+    }
+
+    module Key = Key
+
+    let get_key { node; _ } = Node.get_key node
+    let children { node; _ } = Node.children node
+  end
+
+  module Node_operations = struct
+    type t = Dominator_node.t
+    type key = Node.Key.t
+    type data = Node.Key.Set.t [@@deriving eq]
+
+    let transform ({ node; _ } : t) (data : data) = Node.Key.Set.add data (Node.get_key node)
+
+    let merge (list : data list) =
+      List.reduce list ~f:Set.inter |> Option.value ~default:Node.Key.Set.empty
+
+    let zero { Dominator_node.is_root; domain; node } =
+      if is_root then Node.Key.Set.singleton (Node.get_key node) else domain
+  end
+
+  module Dominator_worklist = Worklist.Make (Dominator_node) (Node_operations)
+  module Multi_map_graph = Multi_map_set.Make (Node.Key) (Node.Key)
+
+  module Dominator_block = struct
+    module Key = Key
+
+    type t = {
+      node : Node.t;
+      dominators : Node.Key.Set.t;
+    }
+
+    let get_key { node; _ } = Node.get_key node
+    let children { node; _ } = Node.children node
+  end
 
   let compute_dominators (traverser : t) : dominator_set =
-    let post_order_nodes =
-      Traverser.reverse_postorder traverser |> List.map ~f:Node.get_key |> Node.Key.Set.of_list
+    let root_key = Traverser.root traverser |> Node.get_key in
+    let domain = Traverser.keys traverser |> Node.Key.Set.of_list in
+    let dominator_traverser =
+      Traverser.inv_map
+        traverser
+        ~f:(fun node ->
+          { Dominator_node.node; is_root = Node.Key.equal root_key (Node.get_key node); domain })
+        ~contra_f:(fun { Dominator_node.node; _ } -> node)
     in
-    let dominator_map : dominator_set =
-      Traverser.keys traverser
-      |> List.map ~f:(fun key -> (key, Node.Key.Set.singleton key))
-      |> Node.Key.Table.of_alist_exn
+    let worklist_result = Dominator_worklist.run_forward dominator_traverser in
+    let result =
+      Node_traverser.Poly.to_map (module Key) worklist_result ~f:(fun { out; _ } -> out)
     in
-    let rec go (nodes : Node.Key.Set.t) : unit =
-      if Set.is_empty nodes then ()
-      else
-        Set.filter nodes ~f:(fun key ->
-            let singleton_key = Node.Key.Set.singleton key in
-            let current_dominators =
-              Hashtbl.find_or_add dominator_map key ~default:(fun () -> singleton_key)
-            in
-            let predecessors =
-              Traverser.predecessors traverser key
-              |> Option.to_list
-              |> List.concat
-              |> List.map ~f:Node.get_key
-            in
-            let new_dominators =
-              Set.union singleton_key
-              @@ Option.value
-                   ~default:singleton_key
-                   (List.reduce
-                      (List.map predecessors ~f:(fun key ->
-                           Hashtbl.find_or_add dominator_map key ~default:(fun () -> singleton_key)))
-                      ~f:Set.inter)
-            in
-            not @@ Set.equal current_dominators new_dominators)
-        |> go
-    in
-    go post_order_nodes;
-    dominator_map
+    result
 
   type dfs_tree_result = {
     arrival_number : int;
     children : Node.Key.Set.t;
   }
+  [@@deriving sexp]
 
-  type dfs_tree = (Node.Key.t, dfs_tree_result) Hashtbl.t
+  type dfs_tree = dfs_tree_result Node.Key.Map.t [@@deriving sexp]
 
   let dfs_tree (traverser : t) : dfs_tree =
-    let tree : (Node.Key.t, dfs_tree_result) Hashtbl.t = Node.Key.Table.create () in
-    let rec go (node : Node.Key.t) (arrival_number : int ref) =
-      if not @@ Hashtbl.mem tree node then
-        List.iter
-          (List.concat @@ Option.to_list @@ Traverser.successors traverser node)
-          ~f:(fun child ->
-            Hashtbl.update
-              tree
-              node
-              ~f:
-                (Option.value_map
-                   ~default:
-                     {
-                       arrival_number = !arrival_number;
-                       children = Node.Key.Set.singleton @@ Node.get_key child;
-                     }
-                   ~f:(fun { children; _ } ->
-                     {
-                       arrival_number = !arrival_number;
-                       children = Set.add children @@ Node.get_key child;
-                     }));
-            arrival_number := !arrival_number + 1;
-            go (Node.get_key child) arrival_number)
+    let rec go
+        (traverser : t)
+        (arrival_map : int Key.Map.t)
+        (children_map : Key.Set.t Key.Map.t)
+        (prev_node : Node.Key.t option)
+        (node : Node.Key.t)
+        (arrival_number : int)
+      =
+      match Map.find arrival_map node with
+      | Some _ -> (arrival_map, children_map, arrival_number)
+      | None ->
+        let arrival_map = Map.set arrival_map ~key:node ~data:arrival_number in
+        let arrival_number = arrival_number + 1 in
+        let new_children_map =
+          match prev_node with
+          | None -> children_map
+          | Some prev_node -> Multi_map_graph.upsert children_map prev_node node
+        in
+        List.fold
+          ~init:(arrival_map, new_children_map, arrival_number)
+          (Node_traverser.Poly.successors traverser node |> Option.to_list |> List.concat)
+          ~f:(fun (arrival_map, children_map, arrival_number) child ->
+            go traverser arrival_map children_map (Some node) (Node.get_key child) arrival_number)
     in
-    go (Traverser.root traverser |> Node.get_key) (ref 0);
+    let (arrival_map, children_map, _) =
+      go traverser Key.Map.empty Key.Map.empty None (Traverser.root traverser |> Node.get_key) 0
+    in
+    let tree =
+      Map.fold arrival_map ~init:Key.Map.empty ~f:(fun ~key ~data:arrival_number tree ->
+          Map.set
+            tree
+            ~key
+            ~data:
+              {
+                arrival_number;
+                children = Map.find children_map key |> Option.value ~default:Key.Set.empty;
+              })
+    in
     tree
 
   let edges (graph : ('key, 'values) Hashtbl.t) ~(f : 'values -> 'key list) : ('key * 'key) list =
@@ -120,14 +153,12 @@ module Graph (Key : Renderable_key) (Node : Node.S with module Key = Key) = stru
   let compute_back_edges (traverser : t) (dominator_set : dominator_set)
       : (Node.Key.t * Node.Key.t) list
     =
-    let dfs_tree = dfs_tree traverser in
-    let dfs_tree_edges =
-      edges dfs_tree ~f:(fun { children; _ } -> Set.to_list children) |> Edge.Set.of_list
-    in
+    let dfs_tree = dfs_tree traverser |> Map.map ~f:(fun { children; _ } -> children) in
+    let dfs_tree_edges = Multi_map_graph.to_alist dfs_tree |> Edge.Set.of_list in
     let traverser_edges = Traverser.edges traverser |> Edge.Set.of_list in
     let possible_back_edges = Set.diff traverser_edges dfs_tree_edges in
     Set.filter possible_back_edges ~f:(fun (source, dest) ->
-        Hashtbl.find dominator_set source
+        Map.find dominator_set source
         |> Option.value_map ~default:false ~f:(fun dominator_set -> Set.mem dominator_set dest))
     |> Set.to_list
 
@@ -215,21 +246,96 @@ module Graph (Key : Renderable_key) (Node : Node.S with module Key = Key) = stru
 
   (*  The dominator tree can be defined as key -> children *)
 
-  module Dominator_tree = Multi_map_set.Make (Node.Key) (Node.Key)
+  module Dominator_tree = struct
+    include Multi_map_set.Make (Node.Key) (Node.Key)
+
+    module Node = struct
+      type t = Node.Key.t [@@deriving sexp, hash, compare]
+      type key = Node.Key.t
+
+      let key = Fn.id
+    end
+  end
 
   let dominator_tree (t : t) (dominator_set : dominator_set) : Dominator_tree.t =
     let tree = dfs_tree t in
-    let key_to_immediate_dominator : (Node.Key.t, Node.Key.t option) Hashtbl.t =
-      Hashtbl.map dominator_set ~f:(fun dominators ->
-          Set.to_list dominators
+    let key_to_immediate_dominator : Node.Key.t option Node.Key.Map.t =
+      Map.mapi dominator_set ~f:(fun ~key ~data:dominators ->
+          Set.to_list (Set.remove dominators key)
           |> List.max_elt
                ~compare:
                  (Comparable.lift Int.compare ~f:(fun dominator ->
-                      (Hashtbl.find_exn tree dominator).arrival_number)))
+                      (Map.find_exn tree dominator).arrival_number)))
     in
     let dominator_to_children =
-      List.filter_map (Hashtbl.to_alist key_to_immediate_dominator) ~f:(fun (key, dominator) ->
+      List.filter_map (Map.to_alist key_to_immediate_dominator) ~f:(fun (key, dominator) ->
           Option.map dominator ~f:(fun dominator -> (dominator, key)))
     in
-    Dominator_tree.of_alist dominator_to_children
+    Dominator_tree.of_alist (module Dominator_tree.Node) dominator_to_children
+end
+
+module Test = struct
+  module IntNode = struct
+    module Key = struct
+      module T = struct
+        type t = int [@@deriving sexp, hash, compare, to_yojson]
+      end
+
+      include T
+      include Comparable.Make (T)
+      include Hashable.Make (T)
+    end
+
+    type t = int * Int.Set.t
+
+    let get_key (key, _) = key
+    let children (_, children) = Set.to_list children
+  end
+
+  module Graph = Make (IntNode.Key) (IntNode)
+
+  let edges = [ (1, 2); (2, 3); (2, 4); (3, 5); (4, 5); (5, 2); (2, 6) ]
+  let expected_dominator_tree_edges = [ (1, 2); (2, 3); (2, 4); (2, 5); (2, 6) ]
+
+  module Int_with_yojson = struct
+    include Int
+
+    let to_yojson (t : t) = `Int t
+
+    include Comparable.Make (Int)
+    include Hashable.Make (Int)
+
+    type key = int
+
+    let key = Fn.id
+    let render = Int.to_string
+  end
+
+  module Multi_set = Multi_map_set.Make (Int_with_yojson) (Int_with_yojson)
+  module Node_set = Node.Make_from_multimap (Int_with_yojson) (Multi_set)
+  module Int_graph = Make (Node_set.Key) (Node_set)
+
+  let graphviz : (int, Node_set.t) Graphviz.t =
+    let render_key = Int.to_string in
+    let render_node = Node_set.render in
+    let get_key = Node_set.get_key in
+    Graphviz.create ~render_key ~render_node ~get_key
+
+  let%test_unit "Should be able to get Graph data easily" =
+    (* Construct a multiset map first *)
+    let multiset = Multi_set.of_alist (module Int_with_yojson) edges in
+    let nodes = List.bind edges ~f:(fun (src, dest) -> [ src; dest ]) |> Int.Set.of_list in
+    let nodes_with_multiset = Set.to_list nodes |> List.map ~f:(fun node -> (multiset, node)) in
+    let node_traveser =
+      Node_traverser.Poly.of_list (module Node_set) nodes_with_multiset |> Option.value_exn
+    in
+    let dominators = Int_graph.compute_dominators node_traveser in
+    let dominator_tree = Int_graph.dominator_tree node_traveser dominators in
+    let expected_dominator_tree =
+      Multi_set.of_alist (module Int_with_yojson) expected_dominator_tree_edges
+    in
+    [%test_eq: Multi_set.t] dominator_tree expected_dominator_tree;
+
+  (* Using the map, construct a node traverser object *)
+  (* Use the node traverse to construct the graph objects  *)
 end
