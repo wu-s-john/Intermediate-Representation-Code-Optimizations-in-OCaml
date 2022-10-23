@@ -90,38 +90,35 @@ struct
   let create_def_use_map (traverser : (Block.Key.t, Block.t) Node_traverser.Poly.t) =
     let def_use_map = Def_use_map.empty in
     let reaching_defs = run traverser in
-    let def_use_map =
-      Node_traverser.Poly.fold
-        reaching_defs
-        ~init:def_use_map
-        ~f:(fun def_use_map { node = block; in_ = reaching_defs; out = _ } ->
-          List.foldi
-            (Program.Block.all_instrs block)
-            ~init:(def_use_map, reaching_defs)
-            ~f:(fun instr_line (def_use_map, reaching_defs) instr ->
-              (* Find all variables used for the instr *)
-              let used_variables = Program.Instruction.used_vars instr |> Set.to_list in
-              (* Find all definitions that are used in the instruction *)
-              let defs =
-                List.bind used_variables ~f:(fun var ->
-                    Var_def_map.get reaching_defs var |> Set.to_list)
-              in
-              (* Update reaching def *)
-              let new_reaching_def =
-                Reaching_def_ops.process_instruction reaching_defs block.label instr_line instr
-              in
-              (* Add the relationship to the map *)
-              let new_def_use_map =
-                List.fold_left defs ~init:def_use_map ~f:(fun def_use_map def ->
-                    Def_use_map.upsert
-                      def_use_map
-                      def
-                      { instruction = instr; label = block.label; instr_line })
-              in
-              (new_def_use_map, new_reaching_def))
-          |> fst)
-    in
-    def_use_map
+    Node_traverser.Poly.fold
+      reaching_defs
+      ~init:def_use_map
+      ~f:(fun def_use_map { node = block; in_ = reaching_defs; out = _ } ->
+        List.foldi
+          (Program.Block.all_instrs block)
+          ~init:(def_use_map, reaching_defs)
+          ~f:(fun instr_line (def_use_map, reaching_defs) instr ->
+            (* Find all variables used for the instr *)
+            let used_variables = Program.Instruction.used_vars instr |> Set.to_list in
+            (* Find all definitions that are used in the instruction *)
+            let defs =
+              List.bind used_variables ~f:(fun var ->
+                  Var_def_map.get reaching_defs var |> Set.to_list)
+            in
+            (* Update reaching def *)
+            let new_reaching_def =
+              Reaching_def_ops.process_instruction reaching_defs block.label instr_line instr
+            in
+            (* Add the relationship to the map *)
+            let new_def_use_map =
+              List.fold_left defs ~init:def_use_map ~f:(fun def_use_map def ->
+                  Def_use_map.upsert
+                    def_use_map
+                    def
+                    { instruction = instr; label = block.label; instr_line })
+            in
+            (new_def_use_map, new_reaching_def))
+        |> fst)
 end
 
 module Test = struct

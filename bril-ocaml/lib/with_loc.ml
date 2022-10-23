@@ -7,6 +7,8 @@ module T = struct
     instr_line : int;
   }
   [@@deriving eq, sexp, compare, to_yojson]
+
+  let map ~f (t : 'instr t) = { t with instruction = f t.instruction }
 end
 
 include T
@@ -52,19 +54,20 @@ module Def = struct
       Option.map dest ~f:(fun dest -> `Call { dest; func_name; args })
     | _ -> None
 
-  let to_program_instruction (t : t) : Program.Instruction.t =
-    match t.instruction with
+  let def_to_program_instruction (instr : instr) : Program.Instruction.t =
+    match instr with
     | `Const const -> `Const const
     | `Binary binary -> `Binary binary
     | `Unary unary -> `Unary unary
     | `Call { dest; func_name; args } -> `Call { dest = Some dest; func_name; args }
+
+  let to_program_instruction (t : t) : Program.Instruction.t =
+    def_to_program_instruction t.instruction
 end
 
 module Instr = struct
   module T = struct
-    open Program
-
-    type t = Instruction.t T.t [@@deriving eq, sexp, compare, to_yojson]
+    type t = Program.Instruction.t T.t [@@deriving eq, sexp, compare, to_yojson]
   end
 
   include T
@@ -77,4 +80,6 @@ module Instr = struct
     | `Unary { dest; _ } -> Some dest
     | `Call { dest; _ } -> Option.map dest ~f:(fun { dest; _ } -> dest)
     | _ -> None
+
+  let of_def (def : Def.t) : t = map def ~f:Def.def_to_program_instruction
 end
