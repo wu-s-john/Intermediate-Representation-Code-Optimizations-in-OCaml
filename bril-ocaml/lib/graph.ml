@@ -164,6 +164,8 @@ module Make (Key : Renderable_key) (Node : Node.S with module Key = Key) = struc
         |> Option.value_map ~default:false ~f:(fun dominator_set -> Set.mem dominator_set dest))
     |> Set.to_list
 
+  module Natural_loop = Natural_loop.Make (Node.Key)
+
   (* To compute a natural loop. Essentially, you start from the source of a back edge. 
      You put that source into a body, which is the set of nodes that are part of the natural loop. 
      Then, for each node that hasn't been put in the body but has been discovered, you put them in the body and then discover more nodes  *)
@@ -171,7 +173,7 @@ module Make (Key : Renderable_key) (Node : Node.S with module Key = Key) = struc
       (traverser : t)
       (dominator_set : Dominator_set.t)
       ((source, dest) : Node.Key.t * Node.Key.t)
-      : Node.Key.Set.t
+      : Natural_loop.t
     =
     let rec go (body : Node.Key.Set.t) (remaining : Node.Key.Set.t) =
       if Set.is_empty remaining then body
@@ -194,7 +196,8 @@ module Make (Key : Renderable_key) (Node : Node.S with module Key = Key) = struc
         let new_remaining = Set.diff remaining_pred new_body in
         go new_body new_remaining
     in
-    go Node.Key.Set.empty (Node.Key.Set.singleton source)
+    let nodes = go Node.Key.Set.empty (Node.Key.Set.singleton source) in
+    Natural_loop.{ nodes; header_node = source; back_node = dest }
 
   let get_predecessors (traverser : t) (current_node : Node.Key.t) : Node.Key.Set.t =
     List.concat (Option.to_list @@ Traverser.predecessors traverser current_node)

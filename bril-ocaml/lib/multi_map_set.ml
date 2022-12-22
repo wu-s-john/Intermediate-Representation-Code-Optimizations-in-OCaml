@@ -42,7 +42,7 @@ module Make (Key : Elem) (Value : Elem) = struct
   let to_alist (t : t) : (Key.t * Value.t) list =
     Map.to_alist t
     |> List.bind ~f:(fun (key, value_set) ->
-           Set.to_list value_set |> List.map ~f:(fun value -> (key, value))) 
+           Set.to_list value_set |> List.map ~f:(fun value -> (key, value)))
 
   let of_alist
       (module Key_value : Value_with_key with type t = Value.t and type key = Key.t)
