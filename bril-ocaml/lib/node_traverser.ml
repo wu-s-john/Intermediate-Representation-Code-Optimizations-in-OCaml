@@ -99,13 +99,6 @@ module Poly = struct
     let%map root = find_root (module Node) map in
     { map; root; children = Node.children; get_key = Node.get_key; hash_module = (module Node.Key) }
 
-  (* let of_alist
-      (type node)
-      (module Elem : Multi_map_set.Elem with type t = node)
-      (module Multi_map : Multi_map_set.S with type Key.t = node and type Value.t = node)
-      (multi_map : Multi_map.t)
-    =
-    failwith "To Implement" *)
   let to_map
       (type key witness)
       (module Comparable : Comparable.S with type t = key and type comparator_witness = witness)

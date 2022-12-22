@@ -290,7 +290,7 @@ let local_value_numbering ({ meta; label; instrs; terminal } : 'a Block.t) : 'a 
   }
 
 module Test = struct
-  let%test_unit "dead code elimination works" =
+  (* let%test_unit "dead code elimination works" =
     let dir = "/Users/johnwu/code/bril/examples/test/tdce" in
     Backtrace.elide := false;
     Async.Thread_safe.block_on_async_exn
@@ -308,7 +308,7 @@ module Test = struct
              ~filename:(dir ^/ filename)
              ~expected:(dir ^/ expected)
              ~f:dead_code_elimination)
-    |> Deferred.ignore_m
+    |> Deferred.ignore_m *)
 
   (* let%test_unit "lvn works" =
     let dir = "/Users/johnwu/code/bril/examples/test/lvn" in

@@ -21,7 +21,7 @@ module Test = struct
           node_traverser
           graphviz)
 
-  let%test_unit "serialize and deserialize value instruction for fib" =
+  (* let%test_unit "serialize and deserialize value instruction for fib" =
     let open Deferred.Let_syntax in
     let filename : string = "/Users/johnwu/code/bril/test/interp/fib.bril" in
     Thread_safe.block_on_async_exn (fun () ->
@@ -31,5 +31,5 @@ module Test = struct
         Graphviz.draw
           "/Users/johnwu/code/bril/fib.dot"
           node_traverser
-          graphviz)
+          graphviz) *)
 end

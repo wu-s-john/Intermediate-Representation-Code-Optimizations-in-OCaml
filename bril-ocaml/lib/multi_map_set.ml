@@ -1,7 +1,6 @@
 open Core
 include Multi_map_set_intf
 
-(* module Make (Key : Elem) (Value : Elem) : S with module Key = Key and module Value = Value = struct *)
 module Make (Key : Elem) (Value : Elem) = struct
   module Key = Key
   module Value = Value

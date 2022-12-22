@@ -28,7 +28,8 @@ module Make (Key : Renderable_key) (Node : Node.S with module Key = Key) = struc
   module Traverser = Node_traverser.Poly
 
   type t = (Node.Key.t, Node.t) Node_traverser.Poly.t
-  type dominator_set = Node.Key.Set.t Node.Key.Map.t [@@deriving sexp]
+
+  module Dominator_set = Multi_map_set.Make (Node.Key) (Node.Key)
 
   module Dominator_node = struct
     type t = {
@@ -72,7 +73,7 @@ module Make (Key : Renderable_key) (Node : Node.S with module Key = Key) = struc
     let children { node; _ } = Node.children node
   end
 
-  let compute_dominators (traverser : t) : dominator_set =
+  let compute_dominators (traverser : t) : Dominator_set.t =
     let root_key = Traverser.root traverser |> Node.get_key in
     let domain = Traverser.keys traverser |> Node.Key.Set.of_list in
     let dominator_traverser =
@@ -150,7 +151,8 @@ module Make (Key : Renderable_key) (Node : Node.S with module Key = Key) = struc
     include Hashable.Make (T)
   end
 
-  let compute_back_edges (traverser : t) (dominator_set : dominator_set)
+  (* After you do a graph traversal and there is an edge that is not a backedge, then it's not a reducible graph *)
+  let compute_back_edges (traverser : t) (dominator_set : Dominator_set.t)
       : (Node.Key.t * Node.Key.t) list
     =
     let dfs_tree = dfs_tree traverser |> Map.map ~f:(fun { children; _ } -> children) in
@@ -161,6 +163,38 @@ module Make (Key : Renderable_key) (Node : Node.S with module Key = Key) = struc
         Map.find dominator_set source
         |> Option.value_map ~default:false ~f:(fun dominator_set -> Set.mem dominator_set dest))
     |> Set.to_list
+
+  (* To compute a natural loop. Essentially, you start from the source of a back edge. 
+     You put that source into a body, which is the set of nodes that are part of the natural loop. 
+     Then, for each node that hasn't been put in the body but has been discovered, you put them in the body and then discover more nodes  *)
+  let compute_natural_loop
+      (traverser : t)
+      (dominator_set : Dominator_set.t)
+      ((source, dest) : Node.Key.t * Node.Key.t)
+      : Node.Key.Set.t
+    =
+    let rec go (body : Node.Key.Set.t) (remaining : Node.Key.Set.t) =
+      if Set.is_empty remaining then body
+      else
+        let new_body = Set.union body remaining in
+        let remaining_pred =
+          Node.Key.Set.union_list
+            (Set.to_list body
+            |> List.map ~f:(fun key ->
+                   if Node.Key.equal key dest then Node.Key.Set.singleton dest
+                   else
+                     Node_traverser.Poly.predecessors traverser key
+                     |> Option.to_list
+                     |> List.concat
+                     |> List.filter_map ~f:(fun node ->
+                            let key = Node.get_key node in
+                            Option.some_if (Dominator_set.mem dominator_set key dest) key)
+                     |> Node.Key.Set.of_list))
+        in
+        let new_remaining = Set.diff remaining_pred new_body in
+        go new_body new_remaining
+    in
+    go Node.Key.Set.empty (Node.Key.Set.singleton source)
 
   let get_predecessors (traverser : t) (current_node : Node.Key.t) : Node.Key.Set.t =
     List.concat (Option.to_list @@ Traverser.predecessors traverser current_node)
@@ -223,11 +257,6 @@ module Make (Key : Renderable_key) (Node : Node.S with module Key = Key) = struc
         find_all_paths_reverse_helper ~explored:Node.Key.Set.empty t source dest max_levels)
     |> List.map ~f:List.rev
 
-  (* let natural_loops ({ traverser } as t : t) (dominator_set : dominator_set) : Traverser.t list = 
-      let back_edges = compute_back_edges t dominator_set in *)
-
-  (* compute dominator tree: It's basically like defining them like a trie  *)
-
   type node_with_dominator = int * Node.Key.t [@@deriving sexp, hash, compare]
 
   let rec add_ancestor_trail
@@ -257,7 +286,7 @@ module Make (Key : Renderable_key) (Node : Node.S with module Key = Key) = struc
     end
   end
 
-  let dominator_tree (t : t) (dominator_set : dominator_set) : Dominator_tree.t =
+  let dominator_tree (t : t) (dominator_set : Dominator_set.t) : Dominator_tree.t =
     let tree = dfs_tree t in
     let key_to_immediate_dominator : Node.Key.t option Node.Key.Map.t =
       Map.mapi dominator_set ~f:(fun ~key ~data:dominators ->
@@ -334,7 +363,7 @@ module Test = struct
     let expected_dominator_tree =
       Multi_set.of_alist (module Int_with_yojson) expected_dominator_tree_edges
     in
-    [%test_eq: Multi_set.t] dominator_tree expected_dominator_tree;
+    [%test_eq: Multi_set.t] dominator_tree expected_dominator_tree
 
   (* Using the map, construct a node traverser object *)
   (* Use the node traverse to construct the graph objects  *)
