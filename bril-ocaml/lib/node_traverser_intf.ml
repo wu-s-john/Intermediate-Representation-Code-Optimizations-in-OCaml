@@ -25,6 +25,7 @@ module type Poly_intf = sig
   val nodes : ('key, 'node) t -> 'node list
   val keys : ('key, 'node) t -> 'key list
   val root : ('key, 'node) t -> 'node
+  val maximum_out_degree: ('key, 'node) t -> int
 
   val of_list
     :  (module Node.S with type t = 'node and type Key.t = 'key) ->

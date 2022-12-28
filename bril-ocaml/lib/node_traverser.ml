@@ -15,6 +15,12 @@ module Poly = struct
     hash_module : (module Hashable with type t = 'key);
   }
 
+  let maximum_out_degree {map; children; _} =
+    Hashtbl.data map
+    |> List.map ~f:(fun {node; _} -> List.length (children node))
+    |> List.max_elt ~compare:Int.compare
+    |> Option.value ~default:0
+
   let predecessors ({ map; _ } : ('key, 'node) t) (key : 'key) =
     Hashtbl.find map key
     |> Option.map ~f:(fun { predecessors; _ } ->
