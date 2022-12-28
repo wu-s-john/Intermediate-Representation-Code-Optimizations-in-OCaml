@@ -52,7 +52,7 @@ let test_optimization ~(filename : string) ~(expected : string) ~(f : Program.t 
 let test_local_optimization
     ~(filename : string)
     ~(expected : string)
-    ~(f : 'a Program.Block.t -> 'a Program.Block.t)
+    ~(f : Program.Block.t -> Program.Block.t)
   =
   test_optimization ~filename ~expected ~f:(fun program ->
       Program.run_local_optimizations program ~f)

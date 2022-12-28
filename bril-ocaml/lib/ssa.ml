@@ -1,4 +1,4 @@
-open Program
+(* open Program
 open Core
 
 type phi_references = Block.Key.Set.t String.Map.t
@@ -42,10 +42,10 @@ end
 
 (* For a given variable, lookup the references of a block *)
 
-type 'a t = (Block.Key.t, 'a Block.t) Hashtbl.t
+type 'a t = (Block.Key.t, Block.t) Hashtbl.t
 
 let compute_variable_defintion_to_block_mapping
-    (block_graph : (Block.Key.t, 'a Block.t) Node_traverser.Poly.t)
+    (block_graph : (Block.Key.t, Block.t) Node_traverser.Poly.t)
     : (Variable.t, Block.Key.Set.t) Hashtbl.t
   =
   List.bind (Node_traverser.Poly.nodes block_graph) ~f:(fun block ->
@@ -54,7 +54,7 @@ let compute_variable_defintion_to_block_mapping
   |> Variable.Table.of_alist_multi
   |> Hashtbl.map ~f:Block.Key.Set.of_list
 
-let variables (blocks : (Block.Key.t, Block_unit.t) Node_traverser.Poly.t) : String.Set.t =
+let variables (blocks : (Block.Key.t, Block.t) Node_traverser.Poly.t) : String.Set.t =
   let result =
     List.map (Node_traverser.Poly.nodes blocks) ~f:(fun block ->
         Set.union (Block.variable_definitions block) (Block.used_variables block))
@@ -62,7 +62,7 @@ let variables (blocks : (Block.Key.t, Block_unit.t) Node_traverser.Poly.t) : Str
   String.Set.union_list result
 
 let add_phi_function
-    (t : (Block.Key.t, Block_unit.t) Node_traverser.Poly.t)
+    (t : (Block.Key.t, Block.t) Node_traverser.Poly.t)
     (dominator_frontier : (Block.Key.t, Block.Key.Set.t) Hashtbl.t)
     : (Block.Key.t, Phi_placing_block.t) Node_traverser.Poly.t
   =
@@ -290,4 +290,4 @@ let rename
     ~dominator_tree
     traverser
     (Node_traverser.Poly.root traverser);
-  traverser *)
+  traverser *) *)

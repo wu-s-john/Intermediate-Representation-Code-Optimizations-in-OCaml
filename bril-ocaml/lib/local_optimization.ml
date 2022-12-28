@@ -2,7 +2,7 @@ open Core
 open Async
 open Program
 
-let rec dead_code_elimination (block : 'a Block.t) : 'a Block.t =
+let rec dead_code_elimination (block : Block.t) : Block.t =
   (* last_def are basically definitions that have been recently made, but never used *)
   let (initial_dead_indices, unused_defs) =
     List.foldi
@@ -269,7 +269,7 @@ module LVN_container = struct
     }
 end
 
-let local_value_numbering ({ meta; label; instrs; terminal } : 'a Block.t) : 'a Block.t =
+let local_value_numbering ({label; instrs; terminal } : Block.t) : Block.t =
   let lvn_container = LVN_container.create () in
   printf !"\nInstructions: %{sexp:Instruction.normal list}" instrs;
   List.iter instrs ~f:(LVN_container.process_instruction lvn_container);
@@ -283,7 +283,6 @@ let local_value_numbering ({ meta; label; instrs; terminal } : 'a Block.t) : 'a 
     | terminal_instr -> terminal_instr
   in
   {
-    meta;
     label;
     instrs = LVN_container.get_optimized_instructions lvn_container;
     terminal = optimized_terminal;

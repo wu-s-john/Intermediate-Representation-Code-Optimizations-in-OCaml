@@ -479,8 +479,7 @@ module Block = struct
     ]
   [@@deriving compare, equal, sexp, hash, to_yojson]
 
-  type 'meta t = {
-    meta : 'meta;
+  type t = {
     label : label option;
     instrs : Instruction.normal list;
     terminal : terminal_instr;
@@ -511,9 +510,9 @@ module Block = struct
     include Comparable.Make (T)
   end
 
-  let get_key ({ label; _ } : 'a t) : Key.t = label
+  let get_key ({ label; _ } : t) : Key.t = label
 
-  let children ({ terminal; _ } : 'a t) : Key.t list =
+  let children ({ terminal; _ } : t) : Key.t list =
     match terminal with
     | `Control control ->
       (match control with
@@ -523,7 +522,7 @@ module Block = struct
     | `NextLabel label -> [ Some label ]
     | `Terminal -> []
 
-  let to_json_repr { label; instrs; terminal; meta = _ } : Json_repr.Instruction.t list =
+  let to_json_repr { label; instrs; terminal } : Json_repr.Instruction.t list =
     List.concat
       [
         Option.map label ~f:(fun label -> Json_repr.Instruction.Label { label }) |> Option.to_list;
@@ -543,42 +542,26 @@ module Block = struct
     String.Set.union_list
       (List.map instrs ~f:(fun instr -> Instruction.used_vars (instr :> Instruction.t)))
 
-  let map ({ meta; _ } as t : 'a t) ~f : 'b t = { t with meta = f meta }
-
-  let all_instrs ({ instrs; terminal; _ } : 'meta t) : Instruction.t list =
+  let all_instrs ({ instrs; terminal; _ } : t) : Instruction.t list =
     List.concat
     @@ [
          List.map instrs ~f:(fun instr -> (instr :> Instruction.t));
          Option.to_list @@ convert_terminal_instr_to_instr terminal;
        ]
 
-  let render (t : 'meta t) : string =
+  let render (t : t) : string =
     String.concat ~sep:"\\n" (List.map ~f:Instruction.to_string (all_instrs t))
 end
 
 module type Monomorphic_block_intf = sig
   type meta
-  type t = meta Block.t [@@deriving sexp, compare, hash]
+  type t = Block.t [@@deriving sexp, compare, hash]
 
   include Node.S with type t := t
 end
 
-(* This is useful to remove have Block module without any polymorphic type parameters *)
-module Make_monomorphic_block (Meta : Meta_intf) :
-  Monomorphic_block_intf with type meta = Meta.t and module Key = Block.Key = struct
-  type t = Meta.t Block.t [@@deriving sexp, compare, hash]
-  type meta = Meta.t
-
-  module Key = Block.Key
-
-  let get_key t = Block.get_key t
-  let children t = Block.children t
-end
-
-module Block_unit = Make_monomorphic_block (Unit)
-
 module Function = struct
-  type blocks = (Block.Key.t, unit Block.t) Node_traverser.Poly.t
+  type blocks = (Block.Key.t, Block.t) Node_traverser.Poly.t
 
   type t = {
     name : string;
@@ -592,20 +575,12 @@ module Function = struct
       (block_name : label option)
       (acc_normal_instr : Instruction.normal list)
       (instrs : Instruction.t list)
-      : unit Block.t list
+      : Block.t list
     =
     match instrs with
     | [] ->
       if Option.is_none block_name && List.is_empty acc_normal_instr then []
-      else
-        [
-          {
-            meta = ();
-            label = block_name;
-            instrs = List.rev acc_normal_instr;
-            terminal = `Terminal;
-          };
-        ]
+      else [ { label = block_name; instrs = List.rev acc_normal_instr; terminal = `Terminal } ]
     | hd_instr :: tail_instr ->
       (match hd_instr with
       (* non-control instructions should not terminate to the next block*)
@@ -614,7 +589,6 @@ module Function = struct
       | `Label label ->
         let constructed_block =
           {
-            meta = ();
             Block.label = block_name;
             instrs = List.rev acc_normal_instr;
             terminal = `NextLabel label;
@@ -624,7 +598,6 @@ module Function = struct
       | #Instruction.control as terminating_instructions ->
         let constructed_block =
           {
-            meta = ();
             Block.label = block_name;
             instrs = List.rev acc_normal_instr;
             terminal = `Control terminating_instructions;
@@ -644,7 +617,7 @@ module Function = struct
     let%bind parsed_instrs = Result.all @@ List.map instrs ~f:Instruction.of_json_repr in
     let block_list = to_basic_blocks_helper None [] parsed_instrs in
     let%map traverser =
-      Node_traverser.Poly.of_list (module Block_unit) block_list
+      Node_traverser.Poly.of_list (module Block) block_list
       |> Result.of_option ~error:`Bad_block_format
     in
     { name; args; blocks = traverser; typ }
@@ -667,7 +640,7 @@ let to_json_repr ({ functions } : t) : Json_repr.Program.t =
 
 let to_yojson (program : t) : Yojson.Safe.t = to_json_repr program |> Json_repr.Program.to_yojson
 
-let run_local_optimizations ({ functions } : t) ~(f : unit Block.t -> unit Block.t) : t =
+let run_local_optimizations ({ functions } : t) ~(f : Block.t -> Block.t) : t =
   List.iter functions ~f:(fun func -> Node_traverser.Poly.map_inplace func.blocks ~f);
   { functions }
 
