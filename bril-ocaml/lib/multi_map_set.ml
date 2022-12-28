@@ -1,20 +1,25 @@
 open Core
 include Multi_map_set_intf
 
-module Make (Key : Elem) (Value : Elem) = struct
+module Make (Key : Comparable) (Value : Comparable) = struct
   module Key = Key
   module Value = Value
 
   type t = Value.Set.t Key.Map.t [@@deriving eq, sexp, compare]
 
-  let to_yojson (t : t) : Yojson.Safe.t =
+  let to_yojson
+      ~(key_to_yojson : Key.t -> Yojson.Safe.t)
+      ~(value_to_yojson : Value.t -> Yojson.Safe.t)
+      (t : t)
+      : Yojson.Safe.t
+    =
     let result =
       Key.Map.to_alist t
       |> List.map ~f:(fun (k, v) ->
              `Assoc
                [
-                 ("key", Key.to_yojson k);
-                 ("value", [%to_yojson: Value.t list] @@ Value.Set.to_list v);
+                 ("key", key_to_yojson k);
+                 ("value", `List (List.map ~f:value_to_yojson @@ Value.Set.to_list v));
                ])
     in
     `List result

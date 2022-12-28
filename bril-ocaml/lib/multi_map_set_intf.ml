@@ -1,11 +1,5 @@
 open Core
 
-module type Elem = sig
-  type t [@@deriving to_yojson]
-
-  include Comparable with type t := t
-end
-
 module type Value_with_key = sig
   type t
   type key
@@ -14,10 +8,16 @@ module type Value_with_key = sig
 end
 
 module type S = sig
-  module Key : Elem
-  module Value : Elem
+  module Key : Comparable
+  module Value : Comparable
 
-  type t = Value.Set.t Key.Map.t [@@deriving eq, sexp, compare, to_yojson]
+  type t = Value.Set.t Key.Map.t [@@deriving eq, sexp, compare]
+
+  val to_yojson
+    :  key_to_yojson:(Key.t -> Yojson.Safe.t) ->
+    value_to_yojson:(Value.t -> Yojson.Safe.t) ->
+    t ->
+    Yojson.Safe.t
 
   val upsert : t -> Key.t -> Value.t -> t
   val mem : t -> Key.t -> Value.t -> bool

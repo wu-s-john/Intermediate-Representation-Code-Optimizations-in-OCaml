@@ -18,13 +18,7 @@ type 'key dfs_tree_result = {
   arrival_number : int;
 }
 
-module type Renderable_key = sig
-  type t [@@deriving sexp, to_yojson]
-
-  include Node.Key with type t := t
-end
-
-module Make (Key : Renderable_key) (Node : Node.S with module Key = Key) = struct
+module Make (Key : Node.Key) (Node : Node.S with module Key = Key) = struct
   module Traverser = Node_traverser.Poly
 
   type t = (Node.Key.t, Node.t) Node_traverser.Poly.t

@@ -55,8 +55,7 @@ struct
         Map.set color_map ~key ~data:color_value)
 
   let register_selection ~(color_map : int Key.Map.t) ~(num_registers : int)
-      : [ `Colored of int | `Spill ] list
+      : [ `Colored of int | `Spill ] Key.Map.t
     =
-    Map.to_alist color_map
-    |> List.map ~f:(fun (key, color) -> if color < num_registers then `Colored color else `Spill)
+    color_map |> Map.map ~f:(fun color -> if color < num_registers then `Colored color else `Spill)
 end

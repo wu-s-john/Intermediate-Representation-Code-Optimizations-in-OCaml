@@ -1,6 +1,6 @@
-module type Elem = Multi_map_set_intf.Elem
+open Core
 
 module type S = Multi_map_set_intf.S
 
-module Make (Key : Multi_map_set_intf.Elem) (Value : Multi_map_set_intf.Elem) :
+module Make (Key : Comparable) (Value : Comparable) :
   S with module Key = Key and module Value = Value
