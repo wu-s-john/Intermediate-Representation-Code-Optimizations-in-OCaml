@@ -510,7 +510,7 @@ module Block = struct
     include Comparable.Make (T)
   end
 
-  let get_key ({ label; _ } : t) : Key.t = label
+  let key ({ label; _ } : t) : Key.t = label
 
   let children ({ terminal; _ } : t) : Key.t list =
     match terminal with
@@ -617,7 +617,7 @@ module Function = struct
     let%bind parsed_instrs = Result.all @@ List.map instrs ~f:Instruction.of_json_repr in
     let block_list = to_basic_blocks_helper None [] parsed_instrs in
     let%map traverser =
-      Node_traverser.Poly.of_list (module Block) block_list
+      Node_traverser.Poly.of_list (module Block) block_list ~get_children:Block.children
       |> Result.of_option ~error:`Bad_block_format
     in
     { name; args; blocks = traverser; typ }

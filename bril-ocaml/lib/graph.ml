@@ -34,8 +34,7 @@ module Make (Key : Node.Key) (Node : Node.S with module Key = Key) = struct
 
     module Key = Key
 
-    let get_key { node; _ } = Node.get_key node
-    let children { node; _ } = Node.children node
+    let key { node; _ } = Node.key node
   end
 
   module Node_operations = struct
@@ -43,13 +42,13 @@ module Make (Key : Node.Key) (Node : Node.S with module Key = Key) = struct
     type key = Node.Key.t
     type data = Node.Key.Set.t [@@deriving eq]
 
-    let transform ({ node; _ } : t) (data : data) = Node.Key.Set.add data (Node.get_key node)
+    let transform ({ node; _ } : t) (data : data) = Node.Key.Set.add data (Node.key node)
 
     let merge (list : data list) =
       List.reduce list ~f:Set.inter |> Option.value ~default:Node.Key.Set.empty
 
     let zero { Dominator_node.is_root; domain; node } =
-      if is_root then Node.Key.Set.singleton (Node.get_key node) else domain
+      if is_root then Node.Key.Set.singleton (Node.key node) else domain
   end
 
   module Dominator_worklist = Worklist.Make (Dominator_node) (Node_operations)
@@ -63,18 +62,17 @@ module Make (Key : Node.Key) (Node : Node.S with module Key = Key) = struct
       dominators : Node.Key.Set.t;
     }
 
-    let get_key { node; _ } = Node.get_key node
-    let children { node; _ } = Node.children node
+    let key { node; _ } = Node.key node
   end
 
   let compute_dominators (traverser : t) : Dominator_set.t =
-    let root_key = Traverser.root traverser |> Node.get_key in
+    let root_key = Traverser.root traverser |> Node.key in
     let domain = Traverser.keys traverser |> Node.Key.Set.of_list in
     let dominator_traverser =
       Traverser.inv_map
         traverser
         ~f:(fun node ->
-          { Dominator_node.node; is_root = Node.Key.equal root_key (Node.get_key node); domain })
+          { Dominator_node.node; is_root = Node.Key.equal root_key (Node.key node); domain })
         ~contra_f:(fun { Dominator_node.node; _ } -> node)
     in
     let worklist_result = Dominator_worklist.run_forward dominator_traverser in
@@ -114,10 +112,10 @@ module Make (Key : Node.Key) (Node : Node.S with module Key = Key) = struct
           ~init:(arrival_map, new_children_map, arrival_number)
           (Node_traverser.Poly.successors traverser node |> Option.to_list |> List.concat)
           ~f:(fun (arrival_map, children_map, arrival_number) child ->
-            go traverser arrival_map children_map (Some node) (Node.get_key child) arrival_number)
+            go traverser arrival_map children_map (Some node) (Node.key child) arrival_number)
     in
     let (arrival_map, children_map, _) =
-      go traverser Key.Map.empty Key.Map.empty None (Traverser.root traverser |> Node.get_key) 0
+      go traverser Key.Map.empty Key.Map.empty None (Traverser.root traverser |> Node.key) 0
     in
     let tree =
       Map.fold arrival_map ~init:Key.Map.empty ~f:(fun ~key ~data:arrival_number tree ->
@@ -183,7 +181,7 @@ module Make (Key : Node.Key) (Node : Node.S with module Key = Key) = struct
                      |> Option.to_list
                      |> List.concat
                      |> List.filter_map ~f:(fun node ->
-                            let key = Node.get_key node in
+                            let key = Node.key node in
                             Option.some_if (Dominator_set.mem dominator_set key dest) key)
                      |> Node.Key.Set.of_list))
         in
@@ -195,7 +193,7 @@ module Make (Key : Node.Key) (Node : Node.S with module Key = Key) = struct
 
   let get_predecessors (traverser : t) (current_node : Node.Key.t) : Node.Key.Set.t =
     List.concat (Option.to_list @@ Traverser.predecessors traverser current_node)
-    |> List.map ~f:Node.get_key
+    |> List.map ~f:Node.key
     |> Node.Key.Set.of_list
 
   let rec find_max_levels_reverse
@@ -213,7 +211,7 @@ module Make (Key : Node.Key) (Node : Node.S with module Key = Key) = struct
       let possible_next_level =
         List.bind (Set.to_list current_level) ~f:(fun current_node ->
             List.concat (Option.to_list @@ Traverser.predecessors traverser current_node))
-        |> List.map ~f:Node.get_key
+        |> List.map ~f:Node.key
         |> Node.Key.Set.of_list
       in
       find_max_levels_reverse
@@ -314,7 +312,7 @@ module Test = struct
 
     type t = int * Int.Set.t
 
-    let get_key (key, _) = key
+    let key (key, _) = key
     let children (_, children) = Set.to_list children
   end
 
@@ -344,7 +342,7 @@ module Test = struct
   let graphviz : (int, Node_set.t) Graphviz.t =
     let render_key = Int.to_string in
     let render_node = Node_set.render in
-    let get_key = Node_set.get_key in
+    let get_key = Node_set.key in
     Graphviz.create ~render_key ~render_node ~get_key
 
   let%test_unit "Should be able to get Graph data easily" =
@@ -353,7 +351,7 @@ module Test = struct
     let nodes = List.bind edges ~f:(fun (src, dest) -> [ src; dest ]) |> Int.Set.of_list in
     let nodes_with_multiset = Set.to_list nodes |> List.map ~f:(fun node -> (multiset, node)) in
     let node_traveser =
-      Node_traverser.Poly.of_list (module Node_set) nodes_with_multiset |> Option.value_exn
+      Node_traverser.Poly.of_list (module Node_set) ~get_children:Node_set.children nodes_with_multiset |> Option.value_exn
     in
     let dominators = Int_graph.compute_dominators node_traveser in
     let dominator_tree = Int_graph.dominator_tree node_traveser dominators in

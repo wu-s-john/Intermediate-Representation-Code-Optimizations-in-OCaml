@@ -55,14 +55,13 @@ module Renderer = struct
   let render_node ({ out; in_; _ } : t) : string =
     Core.sprintf "In:\\n%s\\n==============\\nOut:\\n%s" (render_defs in_) (render_defs out)
 
-  let get_key ({ node = block; _ } : t) : Block.Key.t = Block.get_key block
-  let graphviz = Graphviz.create ~render_key:Block.Key.render ~render_node ~get_key
+  let key ({ node = block; _ } : t) : Block.Key.t = Block.key block
+  let graphviz = Graphviz.create ~render_key:Block.Key.render ~render_node ~get_key:key
 end
 
 type t = (Block.Key.t, (Block.t, Var_def_map.t) Worklist.flow_node) Node_traverser.Poly.t
 
-let get_key (node : (Block.t, Var_def_map.t) Worklist.flow_node) : Block.Key.t =
-  Block.get_key node.node
+let key (node : (Block.t, Var_def_map.t) Worklist.flow_node) : Block.Key.t = Block.key node.node
 
 let run (traverser : (Block.Key.t, Block.t) Node_traverser.Poly.t) : t =
   Worklist_runner.run_forward traverser
@@ -114,10 +113,10 @@ module Test = struct
   *)
 
   let graphviz =
-    let render_key = Program.Block.Key.render in
-    let render_node = Program.Block.render in
-    let get_key = Program.Block.get_key in
-    Graphviz.create ~render_key ~render_node ~get_key
+    Graphviz.create
+      ~render_key:Program.Block.Key.render
+      ~render_node:Program.Block.render
+      ~get_key:Program.Block.key
 
   let%test_unit "Reaching Definitions work for one example" =
     let open Deferred.Let_syntax in

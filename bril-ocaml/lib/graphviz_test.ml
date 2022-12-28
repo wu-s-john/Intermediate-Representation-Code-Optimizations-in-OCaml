@@ -6,7 +6,7 @@ module Test = struct
   let graphviz =
     let render_key = Program.Block.Key.render in
     let render_node = Program.Block.render in
-    let get_key = Program.Block.get_key in
+    let get_key = Program.Block.key in
     Graphviz.create ~render_key ~render_node ~get_key
 
   let%test_unit "serialize and deserialize value instruction for reaching def" =

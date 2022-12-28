@@ -12,8 +12,7 @@ module type S = sig
 
   type t
 
-  val get_key : t -> Key.t
-  val children : t -> Key.t list
+  val key : t -> Key.t
 end
 
 module type Key_with_yojson = sig
@@ -27,6 +26,7 @@ module type Homogeneous_intf = sig
   include S
 
   val render : t -> string
+  val children : t -> Key.t list
 end
 
 module Make_from_multimap
@@ -38,6 +38,6 @@ module Make_from_multimap
   module Key = Key
 
   let render (_, key) = Key.render key
-  let get_key (_, t) = t
+  let key (_, t) = t
   let children (multimap, t) = Multi_map_set.get multimap t |> Set.to_list
 end

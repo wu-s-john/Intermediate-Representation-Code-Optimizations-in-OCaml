@@ -6,7 +6,7 @@ module Make (Key : sig
 end) (Node : sig
   include Comparable
 
-  val get_key : t -> Key.t
+  val key : t -> Key.t
 end) =
 struct
   type t = (Key.t, Node.t) Node_traverser.Poly.t
@@ -24,7 +24,7 @@ struct
             Node_traverser.Poly.successors directed_graph key
             |> Option.to_list
             |> List.concat
-            |> List.map ~f:Node.get_key
+            |> List.map ~f:Node.key
           in
           List.iter children ~f:(fun child ->
               match Queue.get queue key with
@@ -42,7 +42,7 @@ struct
           Node_traverser.Poly.successors directed_graph key
           |> Option.to_list
           |> List.concat
-          |> List.map ~f:Node.get_key
+          |> List.map ~f:Node.key
         in
         let children_colors =
           List.filter_map children ~f:(fun child -> Map.find color_map child) |> Int.Set.of_list

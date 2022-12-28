@@ -44,7 +44,7 @@ struct
             (List.concat (Option.to_list (Node_traverser.Poly.successors traverser key)))
             ~f:(fun { node = succesor_node; _ } ->
               let (_ : [ `Key_already_present | `Ok ]) =
-                let key = Node.get_key succesor_node in
+                let key = Node.key succesor_node in
                 Hash_queue.enqueue_back work_list key key
               in
               ());
@@ -67,7 +67,7 @@ struct
             (List.concat (Option.to_list (Node_traverser.Poly.successors traverser key)))
             ~f:(fun { node = succesor_node; _ } ->
               let (_ : [ `Key_already_present | `Ok ]) =
-                let key = Node.get_key succesor_node in
+                let key = Node.key succesor_node in
                 Hash_queue.enqueue_back work_list key key
               in
               ());
@@ -83,7 +83,7 @@ struct
     let work_list = Node.Key.Hash_queue.create () in
     let nodes = Node_traverser.Poly.reverse_postorder traverser_with_data in
     List.iter nodes ~f:(fun node ->
-        Hash_queue.enqueue_back_exn work_list (Node.get_key node.node) (Node.get_key node.node));
+        Hash_queue.enqueue_back_exn work_list (Node.key node.node) (Node.key node.node));
     let t = { traverser = traverser_with_data; work_list } in
     f t;
     traverser_with_data

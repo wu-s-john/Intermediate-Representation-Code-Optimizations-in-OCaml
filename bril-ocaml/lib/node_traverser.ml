@@ -15,9 +15,9 @@ module Poly = struct
     hash_module : (module Hashable with type t = 'key);
   }
 
-  let maximum_out_degree {map; children; _} =
+  let maximum_out_degree { map; children; _ } =
     Hashtbl.data map
-    |> List.map ~f:(fun {node; _} -> List.length (children node))
+    |> List.map ~f:(fun { node; _ } -> List.length (children node))
     |> List.max_elt ~compare:Int.compare
     |> Option.value ~default:0
 
@@ -55,16 +55,17 @@ module Poly = struct
   let compute_predecessor_map
       (type node key)
       (module Node : Node.S with type t = node and type Key.t = key)
+      ~(get_children : Node.t -> Node.Key.t list)
       (list : node list)
       : (key, key Hash_set.t) Hashtbl.t
     =
     let map : Node.Key.Hash_set.t Node.Key.Table.t = Node.Key.Table.create () in
     List.iter list ~f:(fun node ->
-        List.iter (Node.children node) ~f:(fun child_key ->
+        List.iter (get_children node) ~f:(fun child_key ->
             let child_predecessors =
               Hashtbl.find_or_add map child_key ~default:(fun () -> Node.Key.Hash_set.create ())
             in
-            Hash_set.add child_predecessors (Node.get_key node)));
+            Hash_set.add child_predecessors (Node.key node)));
     map
 
   let find_root
@@ -83,18 +84,23 @@ module Poly = struct
     | [ node ] -> Some node
     | _ -> None
 
-  let of_list (type node key) (module Node : Node.S with type t = node and type Key.t = key) list =
+  let of_list
+      (type node key)
+      (module Node : Node.S with type t = node and type Key.t = key)
+      ~(get_children : Node.t -> Node.Key.t list)
+      list
+    =
     let open Option.Let_syntax in
-    let predecessors_map = compute_predecessor_map (module Node) list in
+    let predecessors_map = compute_predecessor_map (module Node) ~get_children list in
     let%bind map =
       match
         Node.Key.Table.create_mapped
           list
-          ~get_key:(fun node -> Node.get_key node)
+          ~get_key:(fun node -> Node.key node)
           ~get_data:(fun node ->
             {
               predecessors =
-                Hashtbl.find_or_add predecessors_map (Node.get_key node) ~default:(fun () ->
+                Hashtbl.find_or_add predecessors_map (Node.key node) ~default:(fun () ->
                     Node.Key.Hash_set.create ());
               node;
             })
@@ -103,7 +109,7 @@ module Poly = struct
       | `Ok map -> Some map
     in
     let%map root = find_root (module Node) map in
-    { map; root; children = Node.children; get_key = Node.get_key; hash_module = (module Node.Key) }
+    { map; root; children = get_children; get_key = Node.key; hash_module = (module Node.Key) }
 
   let to_map
       (type key witness)
@@ -119,6 +125,7 @@ module Poly = struct
       (type node_in node_out key)
       (module Node : Node.S with type t = node_out and type Key.t = key)
       (t : (key, node_in) t)
+      ~(get_children : node_out -> key list)
       ~(f : node_in -> node_out)
       : (key, node_out) t
     =
@@ -128,8 +135,8 @@ module Poly = struct
     {
       map;
       root = f t.root;
-      children = Node.children;
-      get_key = Node.get_key;
+      children = get_children;
+      get_key = Node.key;
       hash_module = (module Node.Key);
     }
 

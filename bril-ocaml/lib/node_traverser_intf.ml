@@ -25,10 +25,11 @@ module type Poly_intf = sig
   val nodes : ('key, 'node) t -> 'node list
   val keys : ('key, 'node) t -> 'key list
   val root : ('key, 'node) t -> 'node
-  val maximum_out_degree: ('key, 'node) t -> int
+  val maximum_out_degree : ('key, 'node) t -> int
 
   val of_list
     :  (module Node.S with type t = 'node and type Key.t = 'key) ->
+    get_children:('node -> 'key list) ->
     'node list ->
     ('key, 'node) t option
 
@@ -43,6 +44,7 @@ module type Poly_intf = sig
   val map
     :  (module Node.S with type t = 'node_out and type Key.t = 'key) ->
     ('key, 'node_in) t ->
+    get_children:('node_out -> 'key list) ->
     f:('node_in -> 'node_out) ->
     ('key, 'node_out) t
 
