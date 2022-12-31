@@ -41,10 +41,16 @@ module type Poly_intf = sig
     f:('node_in -> 'node_out) ->
     ('key, 'node_out, 'witness) Map.t
 
+  (* Creates from an edge list and a mapping from keys and nodes *)
+  val create
+    :  (module Node.S with type t = 'node and type Key.t = 'key) ->
+    'node list ->
+    ('key * 'key) list ->
+    ('key, 'node) t option
+
   val map
     :  (module Node.S with type t = 'node_out and type Key.t = 'key) ->
     ('key, 'node_in) t ->
-    get_children:('node_out -> 'key list) ->
     f:('node_in -> 'node_out) ->
     ('key, 'node_out) t
 

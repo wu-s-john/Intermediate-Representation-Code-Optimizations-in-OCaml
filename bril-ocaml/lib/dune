@@ -2,7 +2,15 @@
  (name bril)
  (public_name bril)
  (inline_tests)
- (libraries core yojson ppx_deriving_yojson.runtime async ppx_show.runtime)
+ (libraries
+  core
+  yojson
+  ppx_deriving_yojson.runtime
+  async
+  ppx_show.runtime
+  ppx_inline_test.runtime-lib
+  core_kernel.pairing_heap
+  )
  (preprocess
   (pps
    ppx_jane

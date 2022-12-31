@@ -4,20 +4,20 @@ include Node_traverser_intf
 module Poly = struct
   type ('key, 'node) value = {
     predecessors : 'key Hash_set.t;
+    children : 'key Hash_set.t;
     node : 'node;
   }
 
   type ('key, 'node) t = {
     map : ('key, ('key, 'node) value) Hashtbl.t;
     root : 'node;
-    children : 'node -> 'key list;
     get_key : 'node -> 'key;
     hash_module : (module Hashable with type t = 'key);
   }
 
-  let maximum_out_degree { map; children; _ } =
+  let maximum_out_degree { map; _ } =
     Hashtbl.data map
-    |> List.map ~f:(fun { node; _ } -> List.length (children node))
+    |> List.map ~f:(fun { children; _ } -> Hash_set.length children)
     |> List.max_elt ~compare:Int.compare
     |> Option.value ~default:0
 
@@ -28,21 +28,27 @@ module Poly = struct
            |> List.filter_map ~f:(fun parent_key ->
                   Hashtbl.find map parent_key |> Option.map ~f:(fun { node; _ } -> node)))
 
-  let successors ({ map; children; _ } : ('key, 'node) t) (key : 'key) =
+  let successors ({ map; _ } : ('key, 'node) t) (key : 'key) =
     Hashtbl.find map key
-    |> Option.map ~f:(fun { node; _ } ->
-           List.filter_map (children node) ~f:(fun child_key ->
-               Hashtbl.find map child_key |> Option.map ~f:(fun { node; _ } -> node)))
+    |> Option.map ~f:(fun { children; _ } ->
+           children
+           |> Hash_set.to_list
+           |> List.filter_map ~f:(fun child_key ->
+                  Hashtbl.find map child_key |> Option.map ~f:(fun { node; _ } -> node)))
 
   let reverse_postorder
       (type key node)
-      ({ root; map; hash_module = (module Hash); children; get_key } : (key, node) t)
+      ({ root; map; hash_module = (module Hash); get_key } : (key, node) t)
     =
     let queue : (key, node) Hash_queue.t = Hash.Hash_queue.create () in
     let rec go (node : node) : unit =
-      match Hash_queue.enqueue_back queue (get_key node) node with
+      let key = get_key node in
+      match Hash_queue.enqueue_back queue key node with
       | `Key_already_present -> ()
-      | `Ok -> List.iter (children node) ~f:(fun child -> go (Hashtbl.find_exn map child).node)
+      | `Ok ->
+        (Hashtbl.find_exn map key).children
+        |> Hash_set.to_list
+        |> List.iter ~f:(fun child -> go (Hashtbl.find_exn map child).node)
     in
     go root;
     Hash_queue.to_list queue
@@ -75,7 +81,7 @@ module Poly = struct
       : Node.t option
     =
     let possible_root_nodes =
-      Hashtbl.filter_mapi predecessors_map ~f:(fun ~key:_ ~data:{ predecessors; node } ->
+      Hashtbl.filter_mapi predecessors_map ~f:(fun ~key:_ ~data:{ predecessors; node; _ } ->
           if Hash_set.is_empty predecessors then Some node else None)
       |> Hashtbl.to_alist
       |> List.map ~f:(fun (_, node) -> node)
@@ -103,13 +109,14 @@ module Poly = struct
                 Hashtbl.find_or_add predecessors_map (Node.key node) ~default:(fun () ->
                     Node.Key.Hash_set.create ());
               node;
+              children = Node.Key.Hash_set.of_list (get_children node);
             })
       with
       | `Duplicate_keys _ -> None
       | `Ok map -> Some map
     in
     let%map root = find_root (module Node) map in
-    { map; root; children = get_children; get_key = Node.key; hash_module = (module Node.Key) }
+    { map; root; get_key = Node.key; hash_module = (module Node.Key) }
 
   let to_map
       (type key witness)
@@ -121,24 +128,54 @@ module Poly = struct
     |> List.map ~f:(fun (key, { node; _ }) -> (key, f node))
     |> Comparable.Map.of_alist_exn
 
+  let create
+      (type node key)
+      (module Node : Node.S with type t = node and type Key.t = key)
+      (nodes : node list)
+      (edges : (key * key) list)
+    =
+    let open Option.Let_syntax in
+    let children_map = Node.Key.Map.of_alist_multi edges in
+    let predecessors_map =
+      compute_predecessor_map
+        (module Node)
+        ~get_children:(fun node -> Map.find_multi children_map (Node.key node))
+        nodes
+    in
+    let%bind map =
+      match
+        Node.Key.Table.create_mapped
+          nodes
+          ~get_key:(fun node -> Node.key node)
+          ~get_data:(fun node ->
+            {
+              predecessors =
+                Hashtbl.find_or_add predecessors_map (Node.key node) ~default:(fun () ->
+                    Node.Key.Hash_set.create ());
+              node;
+              children =
+                Node.Key.Hash_set.of_list
+                  (Map.find children_map (Node.key node) |> Option.value ~default:[]);
+            })
+      with
+      | `Duplicate_keys _ -> None
+      | `Ok map -> Some map
+    in
+    let%map root = find_root (module Node) map in
+    { map; root; get_key = Node.key; hash_module = (module Node.Key) }
+
   let map
       (type node_in node_out key)
       (module Node : Node.S with type t = node_out and type Key.t = key)
       (t : (key, node_in) t)
-      ~(get_children : node_out -> key list)
       ~(f : node_in -> node_out)
       : (key, node_out) t
     =
     let map =
-      Hashtbl.map t.map ~f:(fun { node; predecessors } -> { predecessors; node = f node })
+      Hashtbl.map t.map ~f:(fun { node; predecessors; children } ->
+          { children; predecessors; node = f node })
     in
-    {
-      map;
-      root = f t.root;
-      children = get_children;
-      get_key = Node.key;
-      hash_module = (module Node.Key);
-    }
+    { map; root = f t.root; get_key = Node.key; hash_module = (module Node.Key) }
 
   (*  This is a quick way to construct a mapping of new mapping  *)
   let inv_map
@@ -148,27 +185,23 @@ module Poly = struct
       : ('key, 'node_out) t
     =
     let map =
-      Hashtbl.map t.map ~f:(fun { node; predecessors } -> { predecessors; node = f node })
+      Hashtbl.map t.map ~f:(fun { node; predecessors; children } ->
+          { children; predecessors; node = f node })
     in
-    {
-      map;
-      root = f t.root;
-      children = Fn.compose t.children contra_f;
-      get_key = Fn.compose t.get_key contra_f;
-      hash_module = t.hash_module;
-    }
+    { map; root = f t.root; get_key = Fn.compose t.get_key contra_f; hash_module = t.hash_module }
 
   let find { map; _ } key = Hashtbl.find map key |> Option.map ~f:(fun { node; _ } -> node)
   let find_exn t key = Option.value_exn (find t key)
 
   let map_inplace { map; _ } ~f =
-    Hashtbl.map_inplace map ~f:(fun { node; predecessors } -> { predecessors; node = f node })
+    Hashtbl.map_inplace map ~f:(fun { node; predecessors; children } ->
+        { children; predecessors; node = f node })
 
   let update { map; get_key; _ } node =
     Hashtbl.change
       map
       (get_key node)
-      ~f:(Option.map ~f:(fun { predecessors; _ } -> { predecessors; node }))
+      ~f:(Option.map ~f:(fun { children; predecessors; _ } -> { predecessors; node; children }))
 
   let edges { map; _ } =
     Hashtbl.to_alist map

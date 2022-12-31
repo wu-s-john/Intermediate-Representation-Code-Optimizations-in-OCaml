@@ -32,4 +32,6 @@ module type S = sig
     t
 
   val to_alist : t -> (Key.t * Value.t) list
+
+  val to_list : t -> Value.t list
 end

@@ -2,7 +2,6 @@ open Core
 
 module type Node_operations_intf = sig
   type t
-  type key
   type data [@@deriving eq]
 
   val transform : t -> data -> data
@@ -18,13 +17,11 @@ type ('node, 'flow_value) flow_node = {
 
 module Make
     (Node : Node.S)
-    (Ops : Node_operations_intf with type key := Node.Key.t and type t := Node.t) =
+    (Ops : Node_operations_intf with type t := Node.t) =
 struct
-  type data = Ops.data
-
   type t = {
     work_list : Node.Key.t Node.Key.Hash_queue.t;
-    traverser : (Node.Key.t, (Node.t, data) flow_node) Node_traverser.Poly.t;
+    traverser : (Node.Key.t, (Node.t, Ops.data) flow_node) Node_traverser.Poly.t;
   }
 
   let rec run_forward_loop ({ work_list; traverser } as t) : unit =
@@ -64,7 +61,7 @@ struct
         Node_traverser.Poly.update traverser updated_node;
         if not @@ equal_data in_ updated_in then
           List.iter
-            (List.concat (Option.to_list (Node_traverser.Poly.successors traverser key)))
+            (List.concat (Option.to_list (Node_traverser.Poly.predecessors traverser key)))
             ~f:(fun { node = succesor_node; _ } ->
               let (_ : [ `Key_already_present | `Ok ]) =
                 let key = Node.key succesor_node in
