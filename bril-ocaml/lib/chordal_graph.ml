@@ -9,7 +9,7 @@ end) (Node : sig
   val key : t -> Key.t
 end) =
 struct
-  type t = (Key.t, Node.t) Node_traverser.Poly.t
+  type t = (Key.t, Node.t) Undirected_graph.Poly.t
 
   module Queue = Priority_hash_map.Make (Key) (Int)
 
@@ -21,10 +21,7 @@ struct
         | None -> None
         | Some (key, _) ->
           let children =
-            Node_traverser.Poly.successors directed_graph key
-            |> Option.to_list
-            |> List.concat
-            |> List.map ~f:Node.key
+            Undirected_graph.Poly.neighbors directed_graph key |> List.map ~f:Node.key
           in
           List.iter children ~f:(fun child ->
               match Queue.get queue key with
@@ -36,14 +33,9 @@ struct
   (* This function determines a coloring for a chordal graph given that the number of colors is unconstrained. 
      Namely, it does this by iteratively going through the ordering of keys it is given and then tries to assign the smallest color value for that node that is not same as it's neighbors  *)
   let unbounded_greedy_coloring (directed_graph : t) (ordering : Key.t list) : int Key.Map.t =
-    let highest_color = Node_traverser.Poly.maximum_out_degree directed_graph in
+    let highest_color = Undirected_graph.Poly.maximum_out_degree directed_graph in
     List.fold ordering ~init:Key.Map.empty ~f:(fun color_map key ->
-        let children =
-          Node_traverser.Poly.successors directed_graph key
-          |> Option.to_list
-          |> List.concat
-          |> List.map ~f:Node.key
-        in
+        let children = Undirected_graph.Poly.neighbors directed_graph key |> List.map ~f:Node.key in
         let children_colors =
           List.filter_map children ~f:(fun child -> Map.find color_map child) |> Int.Set.of_list
         in
@@ -54,7 +46,7 @@ struct
         in
         Map.set color_map ~key ~data:color_value)
 
-  let register_selection ~(color_map : int Key.Map.t) ~(num_registers : int)
+  let register_selection (color_map : int Key.Map.t) (num_registers : int)
       : [ `Colored of int | `Spill ] Key.Map.t
     =
     color_map |> Map.map ~f:(fun color -> if color < num_registers then `Colored color else `Spill)
