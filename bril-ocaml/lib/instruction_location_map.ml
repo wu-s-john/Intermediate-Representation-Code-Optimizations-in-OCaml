@@ -9,9 +9,9 @@ type 'value location = {
   locs : (Program.Instruction.t * 'value) Int.Map.t;
 }
 
-type 'value t = 'value location Label.Map.t
+type 'value t = 'value location Block_name.Map.t
 
-let empty = Label.Map.empty
+let empty = Block_name.Map.empty
 
 let set
     (map : 'value t)
@@ -20,7 +20,7 @@ let set
     (value : 'value)
   =
   let old_location =
-    match Label.Map.find map label with
+    match Block_name.Map.find map label with
     | Some location -> location
     | None -> { before_block = None; locs = Int.Map.empty }
   in
@@ -30,7 +30,7 @@ let set
     | `Index (index, instr) ->
       { old_location with locs = Int.Map.set old_location.locs ~key:index ~data:(instr, value) }
   in
-  Label.Map.set map ~key:label ~data:location
+  Block_name.Map.set map ~key:label ~data:location
 
 let get_sorted_instrs (t : 'value t) label =
   match Map.find t label with
@@ -48,17 +48,17 @@ let get_sorted_instrs (t : 'value t) label =
           else Error (`Missing_index index_in_question))
       |> Result.map ~f:(fun _ -> instrs))
 
-let get_labels (t : 'value t) = Label.Map.keys t
+let get_labels (t : 'value t) = Block_name.Map.keys t
 
 let find (map : 'value t) label index =
-  Label.Map.find map label
+  Block_name.Map.find map label
   |> Option.bind ~f:(fun location ->
          match index with
          | `Before -> location.before_block
          | `Index index -> Option.map (Int.Map.find location.locs index) ~f:snd)
 
 let get_key_value_list (map : 'value t) =
-  Label.Map.to_alist map
+  Block_name.Map.to_alist map
   |> List.concat_map ~f:(fun (label, location) ->
          let before_block =
            match location.before_block with

@@ -34,7 +34,7 @@ module Reaching_def_ops = struct
       ~f:(fun instr_line def_map instr -> process_instruction def_map label instr_line instr)
 end
 
-module Worklist_runner = Worklist.Make (Block) (Reaching_def_ops)
+module Worklist_runner = Worklist.Make (Program.Block) (Reaching_def_ops)
 
 module Renderer = struct
   type t = (Block.t, Var_def_map.t) Worklist.flow_node

@@ -19,7 +19,7 @@ module Def = struct
 
     type variabled_assigned_calls = {
       func_name : string;
-      args : arg list;
+      args : Variable.t list;
       dest : dest;
     }
     [@@deriving hash, eq, sexp, compare, to_yojson]

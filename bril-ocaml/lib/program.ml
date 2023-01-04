@@ -1,130 +1,85 @@
 open! Core
 
-type arg = string [@@deriving compare, equal, sexp, hash, to_yojson]
 type label = string [@@deriving compare, equal, sexp, hash, to_yojson]
+type regular
+type ssa
 
-type const = {
-  dest : string;
+type 'var const = {
+  dest : 'var;
+  (* Definetly a variable *)
   value : [ `Int of int | `Bool of bool ];
 }
 [@@deriving compare, equal, sexp, hash, to_yojson, yojson]
 
-module Op = struct
-  module Binary = struct
-    type t =
-      [ `Add
-      | `Mul
-      | `Sub
-      | `Div
-      | `Eq
-      | `Lt
-      | `Gt
-      | `Le
-      | `Ge
-      | `And
-      | `Or
-      ]
-    [@@deriving sexp, compare, hash, eq, to_yojson]
-
-    let to_symbol = function
-      | `Add -> "+"
-      | `Mul -> "*"
-      | `Sub -> "-"
-      | `Div -> "/"
-      | `Eq -> "="
-      | `Lt -> "<"
-      | `Gt -> ">"
-      | `Le -> "<="
-      | `Ge -> ">="
-      | `And -> "&"
-      | `Or -> "|"
-
-    let digest (op : t) (hashed_arg1 : Md5.t) (hashed_arg2 : Md5.t) =
-      Md5.digest_string
-      @@ sprintf "%s %s %s" (Md5.to_hex hashed_arg1) (to_symbol op) (Md5.to_hex hashed_arg2)
-  end
-
-  module Unary = struct
-    type t =
-      [ `Not
-      | `Id
-      ]
-    [@@deriving sexp, compare, hash, eq, to_yojson]
-
-    let to_string = function
-      | `Not -> "not"
-      | `Id -> "id"
-  end
-end
-
-type binary = {
+(* Using a Variable *)
+type 'var binary = {
   dest : string;
   typ : Type.t;
   op : Op.Binary.t;
-  arg1 : arg;
-  arg2 : arg;
+  arg1 : 'var;
+  arg2 : 'var;
 }
 [@@deriving sexp, compare, hash, eq, to_yojson]
 
-type unary = {
-  dest : string;
+(* Using a Variable *)
+type 'var unary = {
+  dest : 'var;
   typ : Type.t;
   op : Op.Unary.t;
-  arg : arg;
+  arg : 'var;
 }
 [@@deriving sexp, compare, hash, eq, to_yojson]
 
-type br = {
-  arg : arg;
+(* Using a Variable *)
+type 'var br = {
+  arg : 'var;
   true_label : label;
   false_label : label;
 }
 [@@deriving sexp, compare, hash, eq]
 
-type dest = {
-  dest : string;
+(* dest is sing a Variable *)
+type 'var dest = {
+  dest : 'var;
   typ : Type.t;
 }
 [@@deriving compare, equal, sexp, hash, to_yojson]
 
-type call = {
+(* Using a Variable *)
+type 'var call = {
   func_name : string;
-  args : arg list;
-  dest : dest option;
+  args : 'var list;
+  dest : 'var dest option;
 }
 [@@deriving compare, equal, sexp, hash]
 
 (* To account for effect types, ret is wrapped around an option *)
-type ret = arg option [@@deriving compare, equal, sexp, hash]
+type 'var ret = 'var option [@@deriving compare, equal, sexp, hash]
 
 module Instruction = struct
-  type normal =
-    [ `Const of const
-    | `Binary of binary
-    | `Unary of unary
-    | `Call of call
-    | `Print of arg list
+  type 'var normal =
+    [ `Const of 'var const
+    | `Binary of 'var binary
+    | `Unary of 'var unary
+    | `Call of 'var call
+    | `Print of 'var list
     | `Nop
     ]
   [@@deriving compare, equal, sexp, hash]
 
-  type control =
+  type 'var control =
     [ `Jmp of label
-    | `Br of br
-    | `Ret of arg option
+    | `Br of 'var br
+    | `Ret of 'var option
     ]
   [@@deriving compare, equal, sexp, hash]
 
-  type t =
-    [ normal
-    | control
-    | `Label of label
-    ]
-  [@@deriving compare, equal, sexp, hash]
+  type _ t =
+    | Regular : [ Variable.t normal | Variable.t control | `Label of Variable.t ] -> regular t
 
-  let of_json_repr (json_instr : Json_repr.Instruction.t) : (t, Json_repr.Error.t) Result.t =
+  let of_json_repr (json_instr : Json_repr.Instruction.t) : (regular t, Json_repr.Error.t) Result.t =
     match json_instr with
-    | Label { label } -> Ok (`Label label)
+    | Label { label } -> Ok (Regular (`Label label))
     | Instr instr ->
       (match instr with
       | {
@@ -136,7 +91,7 @@ module Instruction = struct
        labels = [];
        value = None;
       } ->
-        Ok (`Binary { dest; typ = Type.Int_typ; op = `Add; arg1; arg2 })
+        Ok (Regular (`Binary { dest; typ = Type.Int_typ; op = `Add; arg1; arg2 }))
       | {
        op = `Mul;
        dest = Some dest;
@@ -146,7 +101,7 @@ module Instruction = struct
        labels = [];
        value = None;
       } ->
-        Ok (`Binary { dest; typ = Type.Int_typ; op = `Mul; arg1; arg2 })
+        Ok (Regular (`Binary { dest; typ = Type.Int_typ; op = `Mul; arg1; arg2 }))
       | {
        op = `Sub;
        dest = Some dest;
@@ -156,7 +111,7 @@ module Instruction = struct
        labels = [];
        value = None;
       } ->
-        Ok (`Binary { dest; typ = Type.Int_typ; op = `Sub; arg1; arg2 })
+        Ok (Regular (`Binary { dest; typ = Type.Int_typ; op = `Sub; arg1; arg2 }))
       | {
        op = `Div;
        dest = Some dest;
@@ -166,7 +121,7 @@ module Instruction = struct
        labels = [];
        value = None;
       } ->
-        Ok (`Binary { dest; typ = Type.Int_typ; op = `Div; arg1; arg2 })
+        Ok (Regular (`Binary { dest; typ = Type.Int_typ; op = `Div; arg1; arg2 }))
       | {
        op = `Eq;
        dest = Some dest;
@@ -176,7 +131,7 @@ module Instruction = struct
        labels = [];
        value = None;
       } ->
-        Ok (`Binary { dest; typ; op = `Eq; arg1; arg2 })
+        Ok (Regular (`Binary { dest; typ; op = `Eq; arg1; arg2 }))
       | {
        op = `Gt;
        dest = Some dest;
@@ -186,7 +141,7 @@ module Instruction = struct
        labels = [];
        value = None;
       } ->
-        Ok (`Binary { dest; typ = Type.Bool_typ; op = `Gt; arg1; arg2 })
+        Ok (Regular (`Binary { dest; typ = Type.Bool_typ; op = `Gt; arg1; arg2 }))
       | {
        op = `Le;
        dest = Some dest;
@@ -196,7 +151,7 @@ module Instruction = struct
        labels = [];
        value = None;
       } ->
-        Ok (`Binary { dest; typ = Type.Bool_typ; op = `Le; arg1; arg2 })
+        Ok (Regular (`Binary { dest; typ = Type.Bool_typ; op = `Le; arg1; arg2 }))
       | {
        op = `Ge;
        dest = Some dest;
@@ -206,7 +161,7 @@ module Instruction = struct
        labels = [];
        value = None;
       } ->
-        Ok (`Binary { dest; typ = Type.Bool_typ; op = `Ge; arg1; arg2 })
+        Ok (Regular (`Binary { dest; typ = Type.Bool_typ; op = `Ge; arg1; arg2 }))
       | {
        op = `Not;
        dest = Some dest;
@@ -216,7 +171,7 @@ module Instruction = struct
        labels = [];
        value = None;
       } ->
-        Ok (`Unary { dest; typ = Type.Bool_typ; op = `Not; arg })
+        Ok (Regular (`Unary { dest; typ = Type.Bool_typ; op = `Not; arg }))
       | {
        op = `And;
        dest = Some dest;
@@ -226,7 +181,7 @@ module Instruction = struct
        labels = [];
        value = None;
       } ->
-        Ok (`Binary { dest; typ = Type.Bool_typ; op = `And; arg1; arg2 })
+        Ok (Regular (`Binary { dest; typ = Type.Bool_typ; op = `And; arg1; arg2 }))
       | {
        op = `Or;
        dest = Some dest;
@@ -236,7 +191,7 @@ module Instruction = struct
        labels = [];
        value = None;
       } ->
-        Ok (`Binary { dest; typ = Type.Bool_typ; op = `Or; arg1; arg2 })
+        Ok (Regular (`Binary { dest; typ = Type.Bool_typ; op = `Or; arg1; arg2 }))
       | {
        op = `Id;
        dest = Some dest;
@@ -246,11 +201,11 @@ module Instruction = struct
        labels = [];
        value = None;
       } ->
-        Ok (`Unary { dest; typ; op = `Id; arg })
+        Ok (Regular (`Unary { dest; typ; op = `Id; arg }))
       | { op = `Nop; dest = None; typ = None; args = []; funcs = []; labels = []; value = None } ->
-        Ok `Nop
+        Ok (Regular `Nop)
       | { op = `Print; dest = None; typ = None; args; funcs = []; labels = []; value = None } ->
-        Ok (`Print args)
+        Ok (Regular (`Print args))
       | {
        op = `Jmp;
        dest = None;
@@ -260,7 +215,7 @@ module Instruction = struct
        labels = [ label ];
        value = None;
       } ->
-        Ok (`Jmp label)
+        Ok (Regular (`Jmp label))
       | {
        op = `Br;
        dest = None;
@@ -270,7 +225,7 @@ module Instruction = struct
        labels = [ true_label; false_label ];
        value = None;
       } ->
-        Ok (`Br { arg; true_label; false_label })
+        Ok (Regular (`Br { arg; true_label; false_label }))
       | {
        op = `Call;
        dest = Some dest;
@@ -280,7 +235,7 @@ module Instruction = struct
        labels = [];
        value = None;
       } ->
-        Ok (`Call { args; func_name; dest = Some { dest; typ } })
+        Ok (Regular (`Call { args; func_name; dest = Some { dest; typ } }))
       | {
        op = `Call;
        dest = None;
@@ -290,7 +245,7 @@ module Instruction = struct
        labels = [];
        value = None;
       } ->
-        Ok (`Call { args; func_name; dest = None })
+        Ok (Regular (`Call { args; func_name; dest = None }))
       | {
        op = `Ret;
        dest = None;
@@ -300,9 +255,9 @@ module Instruction = struct
        labels = [];
        value = None;
       } ->
-        Ok (`Ret (Some arg))
+        Ok (Regular (`Ret (Some arg)))
       | { op = `Ret; dest = None; typ = None; args = []; funcs = []; labels = []; value = None } ->
-        Ok (`Ret None)
+        Ok (Regular (`Ret None))
       | {
        op = `Const;
        dest = Some dest;
@@ -312,7 +267,7 @@ module Instruction = struct
        labels = [];
        value = Some (`Int value);
       } ->
-        Ok (`Const { dest; value = `Int value })
+        Ok (Regular (`Const { dest; value = `Int value }))
       | {
        op = `Const;
        dest = Some dest;
@@ -322,98 +277,105 @@ module Instruction = struct
        labels = [];
        value = Some (`Bool value);
       } ->
-        Ok (`Const { dest; value = `Bool value })
+        Ok (Regular (`Const { dest; value = `Bool value }))
       | malformed_instr -> Error (`Malformed_instr (Instr malformed_instr)))
 
-  let to_json_repr (instr : t) : Json_repr.Instruction.t =
-    match instr with
-    | `Binary { dest; typ; op; arg1; arg2 } ->
-      Instr
-        {
-          op = (op :> Json_repr.Instruction.Op.t);
-          dest = Some dest;
-          typ = Some typ;
-          args = [ arg1; arg2 ];
-          value = None;
-          funcs = [];
-          labels = [];
-        }
-    | `Unary { dest; typ; op; arg } ->
-      Instr
-        {
-          op = (op :> Json_repr.Instruction.Op.t);
-          dest = Some dest;
-          typ = Some typ;
-          args = [ arg ];
-          value = None;
-          funcs = [];
-          labels = [];
-        }
-    | `Nop ->
-      Instr { op = `Nop; dest = None; typ = None; args = []; funcs = []; labels = []; value = None }
-    | `Const { dest; value } ->
-      let typ =
-        match value with
-        | `Bool _ -> Type.Bool_typ
-        | `Int _ -> Type.Int_typ
-      in
-      Instr
-        {
-          op = `Const;
-          dest = Some dest;
-          typ = Some typ;
-          args = [];
-          funcs = [];
-          labels = [];
-          value = Some value;
-        }
-    | `Br { arg; true_label; false_label } ->
-      Instr
-        {
-          op = `Br;
-          dest = None;
-          typ = None;
-          args = [ arg ];
-          funcs = [];
-          labels = [ true_label; false_label ];
-          value = None;
-        }
-    | `Label label -> Label { label }
-    | `Ret arg_opt ->
-      Instr
-        {
-          op = `Ret;
-          dest = None;
-          typ = None;
-          args = Option.to_list arg_opt;
-          funcs = [];
-          labels = [];
-          value = None;
-        }
-    | `Print args ->
-      Instr { op = `Print; dest = None; typ = None; args; funcs = []; labels = []; value = None }
-    | `Call { args; func_name; dest } ->
-      let (dest, typ) =
-        match dest with
-        | Some { dest; typ } -> (Some dest, Some typ)
-        | None -> (None, None)
-      in
-      Instr { op = `Ret; dest; typ; args; funcs = [ func_name ]; labels = []; value = None }
-    | `Jmp label ->
-      Instr
-        {
-          op = `Jmp;
-          dest = None;
-          typ = None;
-          args = [];
-          funcs = [];
-          labels = [ label ];
-          value = None;
-        }
+  let to_json_repr : type var. var t -> Json_repr.Instruction.t = function
+    | Regular instr ->
+      (match instr with
+      | `Binary { dest; typ; op; arg1; arg2 } ->
+        Instr
+          {
+            op = (op :> Json_repr.Instruction.Op.t);
+            dest = Some dest;
+            typ = Some typ;
+            args = [ arg1; arg2 ];
+            value = None;
+            funcs = [];
+            labels = [];
+          }
+      | `Unary { dest; typ; op; arg } ->
+        Instr
+          {
+            op = (op :> Json_repr.Instruction.Op.t);
+            dest = Some dest;
+            typ = Some typ;
+            args = [ arg ];
+            value = None;
+            funcs = [];
+            labels = [];
+          }
+      | `Nop ->
+        Instr
+          { op = `Nop; dest = None; typ = None; args = []; funcs = []; labels = []; value = None }
+      | `Const { dest; value } ->
+        let typ =
+          match value with
+          | `Bool _ -> Type.Bool_typ
+          | `Int _ -> Type.Int_typ
+        in
+        Instr
+          {
+            op = `Const;
+            dest = Some dest;
+            typ = Some typ;
+            args = [];
+            funcs = [];
+            labels = [];
+            value = Some value;
+          }
+      | `Br { arg; true_label; false_label } ->
+        Instr
+          {
+            op = `Br;
+            dest = None;
+            typ = None;
+            args = [ arg ];
+            funcs = [];
+            labels = [ true_label; false_label ];
+            value = None;
+          }
+      | `Label label -> Label { label }
+      | `Ret arg_opt ->
+        Instr
+          {
+            op = `Ret;
+            dest = None;
+            typ = None;
+            args = Option.to_list arg_opt;
+            funcs = [];
+            labels = [];
+            value = None;
+          }
+      | `Print args ->
+        Instr { op = `Print; dest = None; typ = None; args; funcs = []; labels = []; value = None }
+      | `Call { args; func_name; dest } ->
+        let (dest, typ) =
+          match dest with
+          | Some { dest; typ } -> (Some dest, Some typ)
+          | None -> (None, None)
+        in
+        Instr { op = `Ret; dest; typ; args; funcs = [ func_name ]; labels = []; value = None }
+      | `Jmp label ->
+        Instr
+          {
+            op = `Jmp;
+            dest = None;
+            typ = None;
+            args = [];
+            funcs = [];
+            labels = [ label ];
+            value = None;
+          })
 
   let to_yojson = Fn.compose Json_repr.Instruction.to_yojson to_json_repr
-  let normal_to_yojson (normal_instr : normal) = to_yojson (normal_instr :> t)
-  let control_to_yojson (control_instr : control) = to_yojson (control_instr :> t)
+
+  let normal_to_yojson ~f = function
+    | normal_instr -> to_yojson normal_instr
+
+  let control_to_yojson : type var. var t -> Yojson.Safe.t = function
+    | Regular normal_instr ->
+      to_yojson (Regular normal_instr) (control_instr : control) = to_yojson (control_instr :> t)
 
   let used_vars (instr : t) : String.Set.t =
     match instr with
@@ -428,7 +390,7 @@ module Instruction = struct
     | `Jmp _ -> String.Set.empty
     | `Label _ -> String.Set.empty
 
-  let dest (instr : normal) : string option =
+  let dest (instr : 'var normal) : 'var option =
     match instr with
     | `Const { dest; _ }
     | `Binary { dest; _ }
@@ -436,39 +398,37 @@ module Instruction = struct
       Some dest
     | _ -> None
 
-  let to_string (t : t) : string =
-    match t with
-    | `Const { dest; value } ->
-      let serialized_val =
-        match value with
-        | `Int int_value -> Int.to_string int_value
-        | `Bool bool_value -> Bool.to_string bool_value
-      in
-      sprintf "const %s = %s" dest serialized_val
-    | `Binary { dest; typ; op; arg1; arg2 } ->
-      sprintf "%s: %s = %s %s %s" dest (Type.to_string typ) arg1 (Op.Binary.to_symbol op) arg2
-    | `Unary { dest; typ; op; arg } ->
-      sprintf "%s: %s = %s %s" dest (Type.to_string typ) (Op.Unary.to_string op) arg
-    | `Print args -> sprintf "print %s" (String.concat ~sep:" " args)
-    | `Call { args; func_name; dest } ->
-      let left_statement =
-        match dest with
-        | Some { dest; typ } -> sprintf "%s: %s =" (Type.to_string typ) dest
-        | None -> ""
-      in
-      sprintf "%scall @%s %s" left_statement func_name (String.concat ~sep:" " args)
-    | `Nop -> "nop"
-    | `Br { arg; true_label; false_label } -> sprintf "br %s .%s .%s" arg true_label false_label
-    | `Ret arg ->
-      (match arg with
-      | Some arg -> sprintf "ret %s" arg
-      | None -> "ret")
-    | `Jmp label -> sprintf "jmp .%s" label
-    | `Label label -> sprintf ".%s:" label
-end
-
-module type Meta_intf = sig
-  type t [@@deriving compare, equal, sexp, hash]
+  (* : type var. var t -> Json_repr.Instruction.t = *)
+  let to_string : type var. var t -> string = function
+    | Regular instr ->
+      (match instr with
+      | `Const { dest; value } ->
+        let serialized_val =
+          match value with
+          | `Int int_value -> Int.to_string int_value
+          | `Bool bool_value -> Bool.to_string bool_value
+        in
+        sprintf "const %s = %s" dest serialized_val
+      | `Binary { dest; typ; op; arg1; arg2 } ->
+        sprintf "%s: %s = %s %s %s" dest (Type.to_string typ) arg1 (Op.Binary.to_symbol op) arg2
+      | `Unary { dest; typ; op; arg } ->
+        sprintf "%s: %s = %s %s" dest (Type.to_string typ) (Op.Unary.to_string op) arg
+      | `Print args -> sprintf "print %s" (String.concat ~sep:" " args)
+      | `Call { args; func_name; dest } ->
+        let left_statement =
+          match dest with
+          | Some { dest; typ } -> sprintf "%s: %s =" (Type.to_string typ) dest
+          | None -> ""
+        in
+        sprintf "%scall @%s %s" left_statement func_name (String.concat ~sep:" " args)
+      | `Nop -> "nop"
+      | `Br { arg; true_label; false_label } -> sprintf "br %s .%s .%s" arg true_label false_label
+      | `Ret arg ->
+        (match arg with
+        | Some arg -> sprintf "ret %s" arg
+        | None -> "ret")
+      | `Jmp label -> sprintf "jmp .%s" label
+      | `Label label -> sprintf ".%s:" label)
 end
 
 module Block = struct
@@ -494,7 +454,7 @@ module Block = struct
 
   module Key = struct
     module T = struct
-      type t = string option [@@deriving sexp, compare, hash, yojson]
+      type t = label option [@@deriving sexp, compare, hash, yojson]
     end
 
     include T
@@ -551,13 +511,6 @@ module Block = struct
 
   let render (t : t) : string =
     String.concat ~sep:"\\n" (List.map ~f:Instruction.to_string (all_instrs t))
-end
-
-module type Monomorphic_block_intf = sig
-  type meta
-  type t = Block.t [@@deriving sexp, compare, hash]
-
-  include Node.S with type t := t
 end
 
 module Function = struct
