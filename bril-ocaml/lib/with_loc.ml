@@ -6,7 +6,7 @@ module T = struct
     label : string option;
     instr_line : int;
   }
-  [@@deriving eq, sexp, compare, to_yojson]
+  [@@deriving hash, eq, sexp, compare, to_yojson]
 
   let map ~f (t : 'instr t) = { t with instruction = f t.instruction }
 end
@@ -22,7 +22,7 @@ module Def = struct
       args : arg list;
       dest : dest;
     }
-    [@@deriving eq, sexp, compare, to_yojson]
+    [@@deriving hash, eq, sexp, compare, to_yojson]
 
     type instr =
       [ `Const of const
@@ -30,9 +30,9 @@ module Def = struct
       | `Unary of unary
       | `Call of variabled_assigned_calls
       ]
-    [@@deriving eq, sexp, compare, to_yojson]
+    [@@deriving hash, eq, sexp, compare, to_yojson]
 
-    type t = instr T.t [@@deriving eq, sexp, compare, to_yojson]
+    type t = instr T.t [@@deriving hash, eq, sexp, compare, to_yojson]
   end
 
   let declared_variable ({ instruction; _ } : T.t) =
@@ -44,6 +44,7 @@ module Def = struct
 
   include T
   include Comparable.Make (T)
+  include Hashable.Make(T)
 
   let create (instruction : Program.Instruction.t) : instr option =
     match instruction with

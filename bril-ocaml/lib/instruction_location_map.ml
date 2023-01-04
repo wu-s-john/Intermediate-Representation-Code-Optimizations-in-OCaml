@@ -32,6 +32,24 @@ let set
   in
   Label.Map.set map ~key:label ~data:location
 
+let get_sorted_instrs (t : 'value t) label =
+  match Map.find t label with
+  | None -> Error (`Not_found label)
+  | Some { locs; _ } ->
+    let instrs =
+      Int.Map.to_alist ~key_order:`Increasing locs
+      |> List.map ~f:(fun (index, (instr, value)) -> (index, instr, value))
+    in
+    (match instrs with
+    | [] -> Ok []
+    | (index, _, _) :: rest ->
+      List.fold_result rest ~init:index ~f:(fun old_index (index_in_question, _, _) ->
+          if Int.equal index_in_question (old_index + 1) then Ok index_in_question
+          else Error (`Missing_index index_in_question))
+      |> Result.map ~f:(fun _ -> instrs))
+
+let get_labels (t : 'value t) = Label.Map.keys t
+
 let find (map : 'value t) label index =
   Label.Map.find map label
   |> Option.bind ~f:(fun location ->

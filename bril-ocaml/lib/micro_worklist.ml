@@ -152,9 +152,12 @@ struct
         in
         enqueue work_list (Node.key node) node);
     let t = { work_list; traverser; flow_traverser; aggregate = Aggregator.empty } in
-    match direction with
-    | `Forward -> run_forward_loop t
-    | `Backward -> run_backwards_loop t
+    let final_t =
+      match direction with
+      | `Forward -> run_forward_loop t
+      | `Backward -> run_backwards_loop t
+    in
+    final_t.flow_traverser
 end
 
 module Reaching_def_ops = struct
@@ -250,3 +253,88 @@ end
 
 module Liveness_analysis =
   Make (Program.Block) (Liveness_analysis_ops) (Liveness_analysis_aggregator)
+
+(* For each block in the map:
+    You go through each instruction and then align the instructions together in order
+      Make sure that the instructions goes from 1 - n
+    Then, you zip all the instructions together and you get a list of reachable definitions and the possible live variables
+        Then you would want to zip all the defintions together
+  *)
+(* let compute_definition_relations live_vars reaching_def_flow_traverser reaching_def_map reaching_def_flow_traverser = *)
+
+let get_pairs (live_vars : Variable.Set.t) (var_def_map : Var_def_map.t) =
+  let live_variable_list = Set.to_list live_vars in
+  List.bind live_variable_list ~f:(fun var1 ->
+      List.bind live_variable_list ~f:(fun var2 ->
+          let defs1 = Var_def_map.get var_def_map var1 |> Set.to_list in
+          let defs2 = Var_def_map.get var_def_map var2 |> Set.to_list in
+          List.cartesian_product defs1 defs2))
+
+let align_variables_and_instr
+    (live_vars : Variable.Set.t Instruction_location_map.t)
+    (liveness_analysis_flow_traverser :
+      ( Program.Block.Key.t,
+        (Program.Block.Key.t, Liveness_analysis_aggregator.data) Flow_node.t )
+      Node_traverser.Poly.t)
+    (reaching_def_map : Var_def_map.t Instruction_location_map.t)
+    (reaching_def_flow_traverser :
+      ( Program.Block.Key.t,
+        (Program.Block.Key.t, Reaching_def_aggregator.data) Flow_node.t )
+      Node_traverser.Poly.t)
+  =
+  Instruction_location_map.get_labels reaching_def_map
+  |> List.fold_result ~init:[] ~f:(fun acc_pairings label ->
+         let open Result.Let_syntax in
+         let%bind sorted_reaching_def =
+           Instruction_location_map.get_sorted_instrs reaching_def_map label
+         in
+         let%bind sorted_live_vars = Instruction_location_map.get_sorted_instrs live_vars label in
+         let%map () =
+           match List.zip sorted_reaching_def sorted_live_vars with
+           | Unequal_lengths -> Error `Unequal_lengths
+           | Ok zipped_list ->
+             Result.ok_if_true
+               (List.for_all zipped_list ~f:(fun ((index1, instr1, _), (index2, instr2, _)) ->
+                    index1 = index2 && Program.Instruction.equal instr1 instr2))
+               ~error:`Misaligned_instructions
+         in
+         let sorted_reaching_def_with_before_comp =
+           let Flow_node.{ before_block_val; _ } =
+             Node_traverser.Poly.find_exn reaching_def_flow_traverser label
+           in
+           before_block_val
+           :: List.map sorted_reaching_def ~f:(fun (_index, _instr, var_def_map) -> var_def_map)
+         in
+         let liveness_analysis_with_after_comp =
+           let Flow_node.{ after_block_val; _ } =
+             Node_traverser.Poly.find_exn liveness_analysis_flow_traverser label
+           in
+           List.map sorted_live_vars ~f:(fun (_index, _instr, var_def_map) -> var_def_map)
+           @ [ after_block_val ]
+         in
+         List.zip_exn sorted_reaching_def_with_before_comp liveness_analysis_with_after_comp
+         @ acc_pairings)
+
+let create_interference_graph
+    (live_vars : Variable.Set.t Instruction_location_map.t)
+    (liveness_analysis_flow_traverser :
+      ( Program.Block.Key.t,
+        (Program.Block.Key.t, Liveness_analysis_aggregator.data) Flow_node.t )
+      Node_traverser.Poly.t)
+    (reaching_def_map : Var_def_map.t Instruction_location_map.t)
+    (reaching_def_flow_traverser :
+      ( Program.Block.Key.t,
+        (Program.Block.Key.t, Reaching_def_aggregator.data) Flow_node.t )
+      Node_traverser.Poly.t)
+  =
+  let open Result.Let_syntax in
+  let%map aligned_live_vars_and_defs =
+    align_variables_and_instr
+      live_vars
+      liveness_analysis_flow_traverser
+      reaching_def_map
+      reaching_def_flow_traverser
+  in
+  let undirected_edges = List.bind aligned_live_vars_and_defs ~f:(fun (var_def_map, live_vars) ->
+      get_pairs live_vars var_def_map) in
+  Undirected_graph.Poly.of_alist (module With_loc.Def) undirected_edges

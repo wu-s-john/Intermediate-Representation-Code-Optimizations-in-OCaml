@@ -50,6 +50,7 @@ module Make (Key : Comparable) (Value : Comparable) = struct
            Set.to_list value_set |> List.map ~f:(fun value -> (key, value)))
 
   let to_list (t : t) : Value.t list = Map.data t |> List.bind ~f:Set.to_list
+  let keys (t : t) : Key.t list = Map.keys t
 
   let of_alist
       (module Key_value : Value_with_key with type t = Value.t and type key = Key.t)

@@ -31,7 +31,7 @@ module type S = sig
     (Key.t * Value.t) list ->
     t
 
+  val keys: t -> Key.t list
   val to_alist : t -> (Key.t * Value.t) list
-
   val to_list : t -> Value.t list
 end
