@@ -31,7 +31,6 @@ module Make (Var : Variable.S) : Program_intf.S with module Var := Var = struct
   }
   [@@deriving sexp, compare, hash, eq, to_yojson]
 
-  (* Using a Variable *)
   type br = {
     arg : Var.t;
     true_label : Label.t;
@@ -39,14 +38,12 @@ module Make (Var : Variable.S) : Program_intf.S with module Var := Var = struct
   }
   [@@deriving sexp, compare, hash, eq, to_yojson]
 
-  (* dest is sing a Variable *)
   type dest = {
     dest : Var.t;
     typ : Type.t;
   }
   [@@deriving compare, equal, sexp, hash, to_yojson]
 
-  (* Using a Variable *)
   type 'dest call = {
     func_name : string;
     args : Var.t list;
@@ -633,10 +630,24 @@ module Make (Var : Variable.S) : Program_intf.S with module Var := Var = struct
            Option.to_list @@ convert_terminal_instr_to_instr terminal;
          ]
 
+    let terminal (t : t) : terminal_instr = t.terminal
+
+    let all_instrs_with_line (block : t) : (int * Instruction.t) list =
+      List.mapi (all_instrs block) ~f:(fun instr_line instr -> (instr_line, instr))
+
+    let all_normal_instrs_with_line (block : t) : (int * Instruction.normal) list =
+      List.mapi block.instrs ~f:(fun instr_line instr -> (instr_line, instr))
+
+    module Var_location_map = Multi_map_set.Make (Var) (Int)
+
+    let variable_definitions_location_map block : Int.Set.t Var.Map.t =
+      all_instrs_with_line block
+      |> List.filter_map ~f:(fun (line, instr) ->
+             Option.map (Instruction.declared_var instr) ~f:(fun dest -> (dest, line)))
+      |> Var_location_map.of_alist
+
     let render (t : t) : string =
       String.concat ~sep:"\\n" (List.map ~f:Instruction.to_string (all_instrs t))
-
-    let terminal (t : t) : terminal_instr = t.terminal
   end
 
   module Function = struct
@@ -648,6 +659,39 @@ module Make (Var : Variable.S) : Program_intf.S with module Var := Var = struct
       blocks : blocks;
       typ : Type.t option;
     }
+
+    module Var_location_map = Multi_map_set.Make (Var) (Location)
+
+    let variable_location_map ({ blocks; _ } : t) : Location.Set.t Var.Map.t =
+      Node_traverser.Poly.to_map
+        (module Block.Key)
+        blocks
+        ~f:Block.variable_definitions_location_map
+      |> Map.to_alist
+      |> List.bind ~f:(fun (block_name, var_location_map) ->
+             Map.to_alist var_location_map
+             |> List.bind ~f:(fun (var, location_set) ->
+                    location_set
+                    |> Set.to_list
+                    |> List.map ~f:(fun line -> (var, Location.{ block_name; line }))))
+      |> Var_location_map.of_alist
+
+    module Var_block_name_map = Multi_map_set.Make (Var) (Block.Key)
+
+    (* We can also create an indexing. *)
+    let variable_block_map ({ blocks; _ } : t) : Block.Key.Set.t Var.Map.t =
+      Node_traverser.Poly.to_map (module Block.Key) blocks ~f:Block.defined_variables
+      |> Map.to_alist
+      |> List.bind ~f:(fun (block_name, variables) ->
+             Set.to_list variables |> List.map ~f:(fun var -> (var, block_name)))
+      |> Var_block_name_map.of_alist
+
+    let variables ({ blocks; _ } : t) : Var.Set.t =
+      let result =
+        List.map (Node_traverser.Poly.nodes blocks) ~f:(fun block ->
+            Set.union (Block.defined_variables block) (Block.used_variables block))
+      in
+      Var.Set.union_list result
 
     let to_json_repr ({ name; args; blocks; typ } : t) : Json_repr.Function.t =
       let blocks = Node_traverser.Poly.reverse_postorder blocks in

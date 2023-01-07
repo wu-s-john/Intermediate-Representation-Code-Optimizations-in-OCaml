@@ -26,12 +26,13 @@ module type S = sig
   val remove : t -> Key.t -> t
   val get : t -> Key.t -> Value.Set.t
 
-  val of_alist
+  val create
     :  (module Value_with_key with type t = Value.t and type key = Key.t) ->
     (Key.t * Value.t) list ->
     t
 
-  val keys: t -> Key.t list
+  val of_alist : (Key.t * Value.t) list -> t
+  val keys : t -> Key.t list
   val to_alist : t -> (Key.t * Value.t) list
   val to_list : t -> Value.t list
 end

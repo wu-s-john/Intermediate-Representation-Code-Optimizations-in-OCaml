@@ -23,7 +23,13 @@ end
 
 include Regular
 
-module SSA : S = struct
+type ssa = {
+  name : string;
+  counter_id : int;
+}
+[@@deriving compare, equal, sexp, hash, to_yojson]
+
+module SSA = struct
   module T = struct
     type t = {
       name : string;

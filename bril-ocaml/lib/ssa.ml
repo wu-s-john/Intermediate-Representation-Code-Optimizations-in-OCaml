@@ -1,135 +1,82 @@
-(* open Program
+open Program
 open Core
 
-type phi_references = Block.Key.Set.t String.Map.t
+type phi_references = Block.Key.Set.t Variable.Map.t
 
+(* Phi references are essentially phi node place holders  *)
 module Phi_references = Multi_map_set.Make (Variable) (Block.Key)
 
-module Phi_placing_block = struct
-  include Program.Block
-
-  type meta = {
-    defined_variables : Variable.Set.t;
-    domaniance_frontier : Block.Key.Set.t;
-    references : Phi_references.t;
+(* 
+   You have a phi function for a variable which maps block name to instruction location
+   You can also also decide at runtime which variable to choose.
+    - So, there is a mapping from ssa-variable to (blockname, location)
+   *)
+module Single_var_phi_function = struct
+  type t = {
+    block_to_loc_map : Int.t Block_name.Map.t;
+    block_to_instruction : Location.t Variable.SSA.Map.t;
   }
-  [@@deriving sexp]
 
-  type t = meta Block.t [@@deriving sexp]
+  let empty =
+    { block_to_loc_map = Block_name.Map.empty; block_to_instruction = Variable.SSA.Map.empty }
 
-  let create ~(dominator_frontier : (Block.Key.t, Block.Key.Set.t) Hashtbl.t) (block : unit Block.t)
-      : t
-    =
-    Block.map block ~f:(fun () ->
-        let defined_variables = Block.variable_definitions block in
-        {
-          defined_variables;
-          domaniance_frontier = Hashtbl.find_exn dominator_frontier block.label;
-          references = String.Map.empty;
-        })
+  let upsert (t : t) (variable : Variable.SSA.t) { Location.block_name; line } : t =
+    {
+      block_to_loc_map = Map.set t.block_to_loc_map ~key:block_name ~data:line;
+      block_to_instruction = Map.set t.block_to_instruction ~key:variable ~data:{ block_name; line };
+    }
 
-  let upsert_to_phi (t : t) (variable : Variable.t) (block_key : Block.Key.t)
-      : [ `Updated of t | `Not_updated ]
-    =
-    if Phi_references.mem t.meta.references variable block_key then `Not_updated
-    else
-      let new_references = Phi_references.upsert t.meta.references variable block_key in
-      `Updated (Block.map t ~f:(fun meta -> { meta with references = new_references }))
-
-  let is_defined (t : t) (variable : Variable.t) : bool = Map.mem t.meta.references variable
-  let domaniance_frontier (t : t) = t.meta.domaniance_frontier
+  let find_location (t : t) (variable : Variable.SSA.t) : Location.t option =
+    Map.find t.block_to_instruction variable
 end
 
-(* For a given variable, lookup the references of a block *)
+(* Data structure that contain all the phis for a block *)
+module Block_phi_function = struct
+  type value = {ssa_var : Variable.SSA.t; phi : Single_var_phi_function.t}
+  type t = Single_var_phi_function.t Variable.Map.t
 
-type 'a t = (Block.Key.t, Block.t) Hashtbl.t
+  let empty = Variable.Map.empty
 
-let compute_variable_defintion_to_block_mapping
-    (block_graph : (Block.Key.t, Block.t) Node_traverser.Poly.t)
-    : (Variable.t, Block.Key.Set.t) Hashtbl.t
-  =
-  List.bind (Node_traverser.Poly.nodes block_graph) ~f:(fun block ->
-      let variables = Set.to_list (Block.variable_definitions block) in
-      List.map variables ~f:(fun variable -> (variable, Block.get_key block)))
-  |> Variable.Table.of_alist_multi
-  |> Hashtbl.map ~f:Block.Key.Set.of_list
+  (* let create phi_reference *)
 
-let variables (blocks : (Block.Key.t, Block.t) Node_traverser.Poly.t) : String.Set.t =
-  let result =
-    List.map (Node_traverser.Poly.nodes blocks) ~f:(fun block ->
-        Set.union (Block.variable_definitions block) (Block.used_variables block))
-  in
-  String.Set.union_list result
+  let upsert (t : t) (variable : Variable.SSA.t) (location : Location.t) : t =
+    Map.update t variable.name ~f:(function
+        | None -> Single_var_phi_function.upsert Single_var_phi_function.empty variable location
+        | Some phi_function -> Single_var_phi_function.upsert phi_function variable location)
 
-let add_phi_function
-    (t : (Block.Key.t, Block.t) Node_traverser.Poly.t)
-    (dominator_frontier : (Block.Key.t, Block.Key.Set.t) Hashtbl.t)
-    : (Block.Key.t, Phi_placing_block.t) Node_traverser.Poly.t
-  =
-  let variable_definition_to_block_mapping = compute_variable_defintion_to_block_mapping t in
-  let variables = variables t in
-  let block_map_with_phi : (Block.Key.t, Phi_placing_block.t) Node_traverser.Poly.t =
-    Node_traverser.Poly.map
-      (module Phi_placing_block)
-      t
-      ~f:(fun block ->
-        Block.map block ~f:(fun () ->
-            let defined_variables = Block.variable_definitions block in
-            Phi_placing_block.
-              {
-                defined_variables;
-                domaniance_frontier = Hashtbl.find_exn dominator_frontier block.label;
-                references = String.Map.empty;
-              }))
-  in
-  let rec go (block_work_queue : Phi_placing_block.t Block.Key.Hash_queue.t) (variable : string) =
-    Option.iter (Hash_queue.dequeue_back_with_key block_work_queue) ~f:(fun (block_key, block) ->
-        Set.iter block.meta.domaniance_frontier ~f:(fun successor_block_key ->
-            let sucessor_block : Phi_placing_block.t =
-              Node_traverser.Poly.find_exn block_map_with_phi successor_block_key
-            in
-            match Phi_placing_block.upsert_to_phi sucessor_block variable block_key with
-            | `Updated new_successor_block ->
-              let (_ : [ `No_such_key | `Ok ]) =
-                Hash_queue.replace block_work_queue successor_block_key new_successor_block
-              in
-              Node_traverser.Poly.update block_map_with_phi sucessor_block;
-              if Phi_placing_block.is_defined sucessor_block variable then
-                let (_ : [ `Key_already_present | `Ok ]) =
-                  Hash_queue.enqueue_back block_work_queue successor_block_key new_successor_block
-                in
-                ()
-            | `Not_updated -> ());
-        go block_work_queue variable)
-  in
-  Set.iter variables ~f:(fun variable ->
-      let block_work_queue = Block.Key.Hash_queue.create () in
-      Set.iter
-        (Option.value
-           (Hashtbl.find variable_definition_to_block_mapping variable)
-           ~default:Block.Key.Set.empty)
-        ~f:(fun block ->
-          Hash_queue.enqueue_back_exn
-            block_work_queue
-            block
-            (Node_traverser.Poly.find_exn block_map_with_phi block));
-      go block_work_queue variable);
-  block_map_with_phi
+  let find (t : t) (variable : Variable.t) : Single_var_phi_function.t option = Map.find t variable
+  let variables (t : t) : Variable.t list = Map.keys t
+end
+
+module Phi_map = struct
+  type t = Block_phi_function.t Block.Key.Map.t
+
+  (* let empty = Variable.Map.empty
+
+  let upsert (t : t) (variable : Variable.SSA.t) (location : Location.t) : t =
+    Map.update t variable.name ~f:(function
+        | None -> Single_var_phi_function.upsert Single_var_phi_function.empty variable location
+        | Some phi_function -> Single_var_phi_function.upsert phi_function variable location)
+
+  let find (t : t) (variable : Variable.t) : Single_var_phi_function.t option = Map.find t variable *)
+end
 
 module Counter_map = struct
-  type t = int Variable.Table.t
+  type t = int Variable.Map.t
 
-  let increment (t : t) (variable : Variable.t) : int =
-    let result =
-      Hashtbl.find_and_call t variable ~if_found:(fun i -> i + 1) ~if_not_found:(fun _ -> 0)
+  let increment (t : t) (variable : Variable.t) : t * int =
+    let new_t =
+      Map.update t variable ~f:(function
+          | None -> 0
+          | Some i -> i + 1)
     in
-    Hashtbl.update t variable ~f:(fun _ -> result);
-    result
+    let result = Map.find_exn new_t variable in
+    (new_t, result)
 
-  let create () = Variable.Table.create ()
+  let create = Variable.Map.empty
 end
 
-type rename_scope = Variable.t Variable.Map.t
+type rename_scope = Variable.SSA.t With_loc.t Variable.Map.t
 
 module Rename_state = struct
   type t = {
@@ -137,157 +84,192 @@ module Rename_state = struct
     rename_scope : rename_scope;
   }
 
-  (* TODO: maybe throw an error *)
   let get_rename (rename_scope : rename_scope) (variable : Variable.t) =
     Map.find_exn rename_scope variable
 
-  let redefine_definition (counter_map : Counter_map.t) (dest : Variable.t) : Variable.t =
-    let new_dest_value = Counter_map.increment counter_map dest in
-    sprintf !"%s.%i" dest new_dest_value
+  let redefine_definition
+      { counter_map; rename_scope }
+      ({ instruction = dest; label; instr_line } : Variable.t With_loc.t)
+      : t * Variable.SSA.t
+    =
+    let (counter_map, counter_id) = Counter_map.increment counter_map dest in
+    let new_ssa_variable = Variable.SSA.{ name = dest; counter_id } in
+    let rename_scope =
+      Map.set rename_scope ~key:dest ~data:{ instruction = new_ssa_variable; label; instr_line }
+    in
+    ({ counter_map; rename_scope }, new_ssa_variable)
+
+  let process rename_state block_phi_function  = failwith "Bithc"
 
   let rename
-      ~(counter_map : Counter_map.t)
-      (rename_scope : rename_scope)
-      (instruction : Instruction.normal)
-      : Instruction.normal * rename_scope
+      ({ rename_scope; _ } as t)
+      ({ instruction; label; instr_line } as instr_with_loc : Regular.Instruction.normal With_loc.t)
+      : t * Program.SSA.Instruction.normal
     =
     match instruction with
     | `Binary { dest; typ; op; arg1; arg2 } ->
       let renamed_arg1 = get_rename rename_scope arg1 in
       let renamed_arg2 = get_rename rename_scope arg2 in
-      let renamed_dest = redefine_definition counter_map dest in
-      let new_rename_scope = Map.set rename_scope ~key:dest ~data:renamed_dest in
-      (`Binary { dest; typ; op; arg1 = renamed_arg1; arg2 = renamed_arg2 }, new_rename_scope)
+      let (new_t, renamed_dest) =
+        redefine_definition t @@ With_loc.reuse_location instr_with_loc dest
+      in
+      ( new_t,
+        `Binary
+          {
+            dest = renamed_dest;
+            typ;
+            op;
+            arg1 = renamed_arg1.instruction;
+            arg2 = renamed_arg2.instruction;
+          } )
     | `Unary { dest; typ; op; arg } ->
       let renamed_arg = get_rename rename_scope arg in
-      let renamed_dest = redefine_definition counter_map dest in
-      let new_rename_scope = Map.set rename_scope ~key:dest ~data:renamed_dest in
-      (`Unary { dest = renamed_dest; typ; op; arg = renamed_arg }, new_rename_scope)
-    | (`Nop | `Const _) as instr -> (instr, rename_scope)
-    | `Print args ->
-      let updated_args = List.map args ~f:(get_rename rename_scope) in
-      (`Print updated_args, rename_scope)
-    | `Call { func_name; args; dest } ->
-      let updated_args = List.map args ~f:(get_rename rename_scope) in
-      (match dest with
-      | None -> (`Call { func_name; args = updated_args; dest = None }, rename_scope)
-      | Some { dest; typ } ->
-        let new_dest = redefine_definition counter_map dest in
-        ( `Call { func_name; args = updated_args; dest = Some { dest = new_dest; typ } },
-          rename_scope ))
-end
-
-module Rename_block = struct
-  include Program.Block
-
-  module Arg_data = struct
-    module T = struct
-      type t = {
-        renamed_variable : Variable.t;
-        predecessor_label : Block.Key.t;
-      }
-      [@@deriving compare, sexp, hash]
-
-      let compare =
-        Comparable.lift Block.Key.compare ~f:(fun { predecessor_label; _ } -> predecessor_label)
-    end
-
-    include T
-    include Comparable.Make (T)
-
-    let create (renamed_variable : Variable.t) (predecessor_label : Block.Key.t) : t =
-      { renamed_variable; predecessor_label }
-  end
-
-  module Phi_function = struct
-    type out = {
-      referenced_predecessors : Block.Key.Set.t;
-      args : Arg_data.Set.t;
-    }
-    [@@deriving sexp]
-
-    type t = out Variable.Map.t [@@deriving sexp]
-
-    let update (t : t) (rename_scope : rename_scope) (predecessor_label : Block.Key.t) : t =
-      Map.mapi t ~f:(fun ~key:variable ~data:phi_function ->
-          if Set.mem phi_function.referenced_predecessors predecessor_label then
-            let new_args =
-              Set.add phi_function.args
-              @@ Arg_data.create (Map.find_exn rename_scope variable) predecessor_label
-            in
-            { referenced_predecessors = phi_function.referenced_predecessors; args = new_args }
-          else phi_function)
-  end
-
-  type meta = Phi_function.t
-  type t = Phi_function.t Block.t [@@deriving sexp]
-
-  let update_phi_args (t : t) (rename_scope : rename_scope) (predecessor_label : Block.Key.t) : t =
-    { t with meta = Phi_function.update t.meta rename_scope predecessor_label }
-end
-
-let rec rename_block
-    ~(counter_map : Counter_map.t)
-    ~(rename_scope : rename_scope)
-    ~(dominator_tree : (Block.Key.t, Block.Key.t) Node_traverser.Poly.t)
-    (traverser : (Block.Key.t, Rename_block.t) Node_traverser.Poly.t)
-    (block : Rename_block.t)
-    : unit
-  =
-  let (updated_rename_scope, updated_instuctions) =
-    List.fold_map block.instrs ~init:rename_scope ~f:(fun rename_scope instr ->
-        let (instr, new_rename_scope) = Rename_state.rename ~counter_map rename_scope instr in
-        (new_rename_scope, instr))
-  in
-  Node_traverser.Poly.update traverser { block with instrs = updated_instuctions };
-  let successors =
-    List.concat
-    @@ Option.to_list
-    @@ Node_traverser.Poly.successors traverser (Rename_block.get_key block)
-  in
-  List.iter successors ~f:(fun successor_block ->
-      let new_successor_block =
-        Rename_block.update_phi_args successor_block updated_rename_scope block.label
+      let (new_t, renamed_dest) =
+        redefine_definition t @@ With_loc.reuse_location instr_with_loc dest
       in
-      Node_traverser.Poly.update traverser new_successor_block);
-  let successors =
-    List.concat
-    @@ Option.to_list
-    @@ Node_traverser.Poly.successors dominator_tree (Rename_block.get_key block)
-  in
-  List.iter successors ~f:(fun subsequent_dominator ->
-      rename_block
-        ~counter_map
-        ~rename_scope
-        ~dominator_tree
-        traverser
-        (Node_traverser.Poly.find_exn traverser subsequent_dominator))
-
-let rename
-    ~(_dominator_tree : (Block.Key.t, Block.Key.t) Node_traverser.Poly.t)
-    (_phi_placing_traverser : (Block.Key.t, Phi_placing_block.t) Node_traverser.Poly.t)
-    : (Block.Key.t, Rename_block.t) Node_traverser.Poly.t
-  =
-  failwith "Need to implement"
-(* let counter_map = Counter_map.create () in
-  let rename_scope = Variable.Map.empty in
-  let traverser =
-    Node_traverser.Poly.map
-      (module Phi_placing_block)
-      phi_placing_traverser
-      ~f:(fun block ->
-        let phi_references = block.meta.references in
-        let phi_function =
-          Map.map phi_references ~f:(fun references ->
-              Rename_block.Phi_function.
-                { referenced_predecessors = references; args = Rename_block.Arg_data.Set.empty })
+      (new_t, `Unary { dest = renamed_dest; typ; op; arg = renamed_arg.instruction })
+    | `Nop -> (t, `Nop)
+    | `Const { dest; value } ->
+      let (new_t, dest) = redefine_definition t @@ With_loc.reuse_location instr_with_loc dest in
+      (new_t, `Const { dest; value })
+    | `Print args ->
+      let updated_args =
+        List.map args ~f:(get_rename rename_scope)
+        |> List.map ~f:(fun with_loc -> with_loc.instruction)
+      in
+      (t, `Print updated_args)
+    | `Call { func_name; args; dest } ->
+      let updated_args =
+        List.map args ~f:(get_rename rename_scope)
+        |> List.map ~f:(fun with_loc -> with_loc.instruction)
+      in
+      (match dest with
+      | None -> (t, `Call { func_name; args = updated_args; dest = None })
+      | Some { dest; typ } ->
+        let (new_t, new_dest) =
+          redefine_definition t @@ With_loc.reuse_location instr_with_loc dest
         in
-        { block with meta = phi_function })
+        (new_t, `Call { func_name; args = updated_args; dest = Some { dest = new_dest; typ } }))
+
+  let rename_control ({ rename_scope; _ } as t) (instruction : Regular.Block.terminal_instr)
+      : t * SSA.Block.terminal_instr
+    =
+    match instruction with
+    | `Terminal -> (t, `Terminal)
+    | `NextLabel label -> (t, `NextLabel label)
+    | `Control (`Jmp label) -> (t, `Control (`Jmp label))
+    | `Control (`Br { arg; true_label; false_label }) ->
+      let renamed_arg = get_rename rename_scope arg in
+      let new_br : Program.SSA.br = { arg = renamed_arg.instruction; true_label; false_label } in
+      (t, `Control (`Br new_br))
+    | `Control (`Ret var) ->
+      Option.value_map
+        var
+        ~default:(t, `Control (`Ret None))
+        ~f:(fun var ->
+          let renamed_var = get_rename rename_scope var in
+          (t, `Control (`Ret (Some renamed_var.instruction))))
+end
+
+let construct_phi_nodes
+    (t : Program.Function.t)
+    (dominance_frontier : Block.Key.Set.t Block.Key.Map.t)
+    : Phi_references.t
+  =
+  Program.Function.variable_block_map t
+  |> Map.fold ~init:Phi_references.empty ~f:(fun ~key:variable ~data:block_keys phi_references ->
+         let phi_references =
+           Set.fold block_keys ~init:phi_references ~f:(fun phi_references block_key ->
+               let block_dominance_frontier = Map.find_exn dominance_frontier block_key in
+               Set.fold
+                 block_dominance_frontier
+                 ~init:phi_references
+                 ~f:(fun phi_references block_key ->
+                   Phi_references.upsert phi_references variable block_key))
+         in
+         phi_references)
+
+type t = {
+  acc_block_map : Program.SSA.Block.t Block_name.Map.t;
+  phis : Phi_map.t;
+  rename_state : Rename_state.t;
+}
+
+(* TODO: There is a huge bug where  *)
+let rename_block
+    (block : Regular.Block.t)
+    (block_phi_function : Block_phi_function.t)
+    (rename_state : Rename_state.t)
+    : Rename_state.t * Program.SSA.Block.t
+  =
+  let rename_state = Rename_state.process rename_state block_phi_function in
+  let (new_rename_state, instructions) =
+    List.fold_map
+      (Regular.Block.all_normal_instrs_with_line block)
+      ~init:rename_state
+      ~f:(fun rename_state (instr_line, instruction) ->
+        Rename_state.rename
+          rename_state
+          With_loc.{ instruction; instr_line; label = Regular.Block.key block })
   in
-  rename_block
-    ~counter_map
-    ~rename_scope
-    ~dominator_tree
-    traverser
-    (Node_traverser.Poly.root traverser);
-  traverser *) *)
+  let (new_rename_state, terminal_instr) =
+    Rename_state.rename_control new_rename_state (Regular.Block.terminal block)
+  in
+  (new_rename_state, { label = block.label; instrs = instructions; terminal = terminal_instr })
+
+(* Get all the variables that the block is demanding. Add them to the  *)
+let update_phis_from_successors
+    (func : Program.Regular.Function.t)
+    (block_name : Block.Key.t)
+    (phi_map : Phi_map.t)
+    (rename_state : Rename_state.t) (* : Phis.t*)
+  =
+  let successors =
+    Node_traverser.Poly.successors func.blocks block_name |> Option.to_list |> List.concat
+  in
+  List.fold successors ~init:phi_map ~f:(fun phi_map successor_block ->
+      let block_phi_function =
+        Map.find phi_map (Regular.Block.key successor_block)
+        |> Option.value ~default:Block_phi_function.empty
+      in
+      let variables_to_gather = Block_phi_function.variables block_phi_function in
+      List.fold variables_to_gather ~init:phi_map ~f:(fun phi_map variable ->
+          let With_loc.{ instruction = ssa_variable; label; instr_line } =
+            Rename_state.get_rename rename_state.rename_scope variable
+          in
+          let phi =
+            Block_phi_function.upsert
+              block_phi_function
+              ssa_variable
+              Location.{ block_name = label; line = instr_line }
+          in
+          Map.set phi_map ~key:(Regular.Block.key successor_block) ~data:phi))
+
+let rec rename
+    (func : Program.Regular.Function.t)
+    (dominator_tree : Block_name.Set.t Block_name.Map.t)
+    block_name
+    { acc_block_map; phis; rename_state }
+    : t
+  =
+  let phi = Map.find phis block_name |> Option.value ~default:Block_phi_function.empty in
+  let (updated_rename_state, ssa_block) =
+    rename_block (Node_traverser.Poly.find_exn func.blocks block_name) phi rename_state
+  in
+  let updated_phis = update_phis_from_successors func block_name phis rename_state in
+  let updated_acc_block_map = Map.set acc_block_map ~key:block_name ~data:ssa_block in
+  let updated_t =
+    {
+      acc_block_map = updated_acc_block_map;
+      phis = updated_phis;
+      rename_state = updated_rename_state;
+    }
+  in
+  let immediate_dominators =
+    Map.find dominator_tree block_name |> Option.value ~default:Block_name.Set.empty
+  in
+  let new_t =
+    Block_name.Set.fold immediate_dominators ~init:updated_t ~f:(fun t block_name ->
+        rename func dominator_tree block_name t)
+  in
+  { new_t with rename_state }

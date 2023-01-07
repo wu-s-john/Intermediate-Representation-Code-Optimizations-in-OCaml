@@ -23,7 +23,7 @@ module Make (Key : Node.Key) (Node : Node.S with module Key = Key) = struct
 
   type t = (Node.Key.t, Node.t) Node_traverser.Poly.t
 
-  module Dominator_set = Multi_map_set.Make (Node.Key) (Node.Key)
+  module Key_graph = Multi_map_set.Make (Node.Key) (Node.Key)
 
   module Dominator_node = struct
     type t = {
@@ -65,7 +65,7 @@ module Make (Key : Node.Key) (Node : Node.S with module Key = Key) = struct
     let key { node; _ } = Node.key node
   end
 
-  let compute_dominators (traverser : t) : Dominator_set.t =
+  let compute_dominators (traverser : t) : Key_graph.t =
     let root_key = Traverser.root traverser |> Node.key in
     let domain = Traverser.keys traverser |> Node.Key.Set.of_list in
     let dominator_traverser =
@@ -88,6 +88,12 @@ module Make (Key : Node.Key) (Node : Node.S with module Key = Key) = struct
   [@@deriving sexp]
 
   type dfs_tree = dfs_tree_result Node.Key.Map.t [@@deriving sexp]
+
+  let to_ordered_list (tree : dfs_tree) : Node.Key.t list =
+    Map.to_alist tree
+    |> List.sort ~compare:(fun (_, { arrival_number = a; _ }) (_, { arrival_number = b; _ }) ->
+           Int.compare a b)
+    |> List.map ~f:(fun (key, _) -> key)
 
   let dfs_tree (traverser : t) : dfs_tree =
     let rec go
@@ -144,7 +150,7 @@ module Make (Key : Node.Key) (Node : Node.S with module Key = Key) = struct
   end
 
   (* After you do a graph traversal and there is an edge that is not a backedge, then it's not a reducible graph *)
-  let compute_back_edges (traverser : t) (dominator_set : Dominator_set.t)
+  let compute_back_edges (traverser : t) (dominator_set : Key_graph.t)
       : (Node.Key.t * Node.Key.t) list
     =
     let dfs_tree = dfs_tree traverser |> Map.map ~f:(fun { children; _ } -> children) in
@@ -163,7 +169,7 @@ module Make (Key : Node.Key) (Node : Node.S with module Key = Key) = struct
      Then, for each node that hasn't been put in the body but has been discovered, you put them in the body and then discover more nodes  *)
   let compute_natural_loop
       (traverser : t)
-      (dominator_set : Dominator_set.t)
+      (dominator_set : Key_graph.t)
       ((source, dest) : Node.Key.t * Node.Key.t)
       : Natural_loop.t
     =
@@ -182,7 +188,7 @@ module Make (Key : Node.Key) (Node : Node.S with module Key = Key) = struct
                      |> List.concat
                      |> List.filter_map ~f:(fun node ->
                             let key = Node.key node in
-                            Option.some_if (Dominator_set.mem dominator_set key dest) key)
+                            Option.some_if (Key_graph.mem dominator_set key dest) key)
                      |> Node.Key.Set.of_list))
         in
         let new_remaining = Set.diff remaining_pred new_body in
@@ -268,8 +274,6 @@ module Make (Key : Node.Key) (Node : Node.S with module Key = Key) = struct
       add_ancestor_trail trie (child :: rest)
     | _ -> ()
 
-  (*  The dominator tree can be defined as key -> children *)
-
   module Dominator_tree = struct
     include Multi_map_set.Make (Node.Key) (Node.Key)
 
@@ -281,7 +285,7 @@ module Make (Key : Node.Key) (Node : Node.S with module Key = Key) = struct
     end
   end
 
-  let dominator_tree (t : t) (dominator_set : Dominator_set.t) : Dominator_tree.t =
+  let dominator_tree (t : t) (dominator_set : Key_graph.t) : Dominator_tree.t =
     let tree = dfs_tree t in
     let key_to_immediate_dominator : Node.Key.t option Node.Key.Map.t =
       Map.mapi dominator_set ~f:(fun ~key ~data:dominators ->
@@ -295,7 +299,97 @@ module Make (Key : Node.Key) (Node : Node.S with module Key = Key) = struct
       List.filter_map (Map.to_alist key_to_immediate_dominator) ~f:(fun (key, dominator) ->
           Option.map dominator ~f:(fun dominator -> (dominator, key)))
     in
-    Dominator_tree.of_alist (module Dominator_tree.Node) dominator_to_children
+    Dominator_tree.of_alist dominator_to_children
+
+  let intersecting_dominators
+      (tree : dfs_tree)
+      (immediate_dominator : Node.Key.t Node.Key.Map.t)
+      (node1 : Node.Key.t)
+      (node2 : Node.Key.t)
+      : Node.Key.t
+    =
+    let rec find_intersecting_dominator (node1 : Node.Key.t) (node2 : Node.Key.t) : Node.Key.t =
+      if Node.Key.equal node1 node2 then node1
+      else
+        let node1_arrival_number = (Map.find_exn tree node1).arrival_number in
+        let node2_arrival_number = (Map.find_exn tree node2).arrival_number in
+        if Int.(node1_arrival_number > node2_arrival_number) then
+          (* This means that node1 is less dominate than node2, so we must increace it*)
+          let node1_dominator = Map.find_exn immediate_dominator node1 in
+          find_intersecting_dominator node1_dominator node2
+        else
+          let node2_dominator = Map.find_exn immediate_dominator node2 in
+          find_intersecting_dominator node1 node2_dominator
+    in
+    find_intersecting_dominator node1 node2
+
+  let immediate_dominator (t : t) : Node.Key.t Node.Key.Map.t =
+    let tree = dfs_tree t in
+    let ordering = Node_traverser.Poly.reverse_postorder t in
+    let root = Node_traverser.Poly.root t |> Node.key in
+    let rec loop_until_no_change flag immediate_dominator_map =
+      match flag with
+      | false -> immediate_dominator_map
+      | true ->
+        List.fold
+          ordering
+          ~init:(true, immediate_dominator_map)
+          ~f:(fun (should_continue, immediate_dominator_map) node ->
+            let node_key = Node.key node in
+            let processed_predecessors =
+              Node_traverser.Poly.predecessors t node_key
+              |> Option.to_list
+              |> List.concat
+              |> List.filter ~f:(fun node -> Map.mem immediate_dominator_map (Node.key node))
+            in
+            match processed_predecessors with
+            | [] -> (should_continue, immediate_dominator_map)
+            | head_predecessor :: tail_predecessors ->
+              let old_immediate_dominator = Map.find immediate_dominator_map node_key in
+              let potential_dominator =
+                Map.find_exn immediate_dominator_map (Node.key head_predecessor)
+              in
+              let new_immediate_dominator =
+                List.fold
+                  tail_predecessors
+                  ~init:potential_dominator
+                  ~f:(fun dominator predecessor ->
+                    intersecting_dominators
+                      tree
+                      immediate_dominator_map
+                      dominator
+                      (Node.key predecessor))
+              in
+              if [%eq: Node.Key.t option] (Some new_immediate_dominator) old_immediate_dominator
+              then
+                (true, Map.set immediate_dominator_map ~key:node_key ~data:new_immediate_dominator)
+              else (false, immediate_dominator_map))
+        |> fun (flag, map) -> loop_until_no_change flag map
+    in
+    loop_until_no_change true (Node.Key.Map.of_alist_exn [ (root, root) ])
+
+  let dominator_frontier (t : t) (immediate_dominator_map : Node.Key.t Node.Key.Map.t)
+      : Node.Key.Set.t Node.Key.Map.t
+    =
+    Node_traverser.Poly.nodes t
+    |> List.filter_map ~f:(fun node ->
+           let predecessors =
+             Node_traverser.Poly.predecessors t (Node.key node) |> Option.to_list |> List.concat
+           in
+           Option.some_if (List.length predecessors > 1) (node, predecessors))
+    |> List.bind ~f:(fun (node, predecessors) ->
+           List.map predecessors ~f:(fun predecessor -> (node, predecessor)))
+    |> List.fold ~init:Key_graph.empty ~f:(fun frontier (node, predecessor) ->
+           let immediate_dominator_key_for_predecessor =
+             Map.find_exn immediate_dominator_map (Node.key predecessor)
+           in
+           Sequence.unfold ~init:(Node.key predecessor) ~f:(fun runner ->
+               Option.some_if
+                 (Node.Key.equal immediate_dominator_key_for_predecessor runner)
+                 (runner, Map.find_exn immediate_dominator_map runner))
+           (* This will fail all the time *)
+           |> Sequence.fold ~init:frontier ~f:(fun frontier runner ->
+                  Key_graph.upsert frontier runner (Node.key node)))
 end
 
 module Test = struct
@@ -347,17 +441,19 @@ module Test = struct
 
   let%test_unit "Should be able to get Graph data easily" =
     (* Construct a multiset map first *)
-    let multiset = Multi_set.of_alist (module Int_with_yojson) edges in
+    let multiset = Multi_set.of_alist edges in
     let nodes = List.bind edges ~f:(fun (src, dest) -> [ src; dest ]) |> Int.Set.of_list in
     let nodes_with_multiset = Set.to_list nodes |> List.map ~f:(fun node -> (multiset, node)) in
     let node_traveser =
-      Node_traverser.Poly.of_list (module Node_set) ~get_children:Node_set.children nodes_with_multiset |> Option.value_exn
+      Node_traverser.Poly.of_list
+        (module Node_set)
+        ~get_children:Node_set.children
+        nodes_with_multiset
+      |> Option.value_exn
     in
     let dominators = Int_graph.compute_dominators node_traveser in
     let dominator_tree = Int_graph.dominator_tree node_traveser dominators in
-    let expected_dominator_tree =
-      Multi_set.of_alist (module Int_with_yojson) expected_dominator_tree_edges
-    in
+    let expected_dominator_tree = Multi_set.of_alist expected_dominator_tree_edges in
     [%test_eq: Multi_set.t] dominator_tree expected_dominator_tree
 
   (* Using the map, construct a node traverser object *)

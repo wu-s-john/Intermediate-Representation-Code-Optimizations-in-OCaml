@@ -71,9 +71,7 @@ module type S = sig
       [@@deriving compare, equal, hash]
 
       val sexp_of_t : t -> Base.Sexp.t
-
       val t_of_sexp : Base.Sexp.t -> t
-
       val assignment_var : t -> Var.t
     end
 
@@ -133,6 +131,8 @@ module type S = sig
     val used_variables : t -> Var.Set.t
     val used_variable_names : t -> String.Set.t
     val all_instrs : t -> Instruction.t list
+    val all_instrs_with_line : t -> (int * Instruction.t) list
+    val all_normal_instrs_with_line : t -> (int * Instruction.normal) list
     val render : t -> string
     val terminal : t -> terminal_instr
   end
@@ -145,7 +145,12 @@ module type S = sig
       args : Func_arg.t list;
       blocks : blocks;
       typ : Type.t option;
-    } [@@deriving yojson]
+    }
+    [@@deriving yojson]
+
+    val variable_location_map : t -> Location.Set.t Var.Map.t
+    val variable_block_map : t -> Block.Key.Set.t Var.Map.t
+    val variables : t -> Var.Set.t
   end
 
   type t = { functions : Function.t list } [@@deriving yojson]

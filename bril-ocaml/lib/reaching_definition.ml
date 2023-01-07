@@ -10,7 +10,7 @@ module Reaching_def_ops = struct
 
   (* First kill the existing variable in the map. Then add it *)
   let set_definition (var_def_map : data) (def : With_loc.Def.t) =
-    let declared_variable = With_loc.Def.declared_variable def in
+    let declared_variable = Program.Instruction.Definition.assignment_var def.instruction in
     let removed_def_map = Var_def_map.remove var_def_map declared_variable in
     Var_def_map.upsert removed_def_map declared_variable def
 
@@ -49,7 +49,7 @@ module Renderer = struct
              (Option.value ~default:"ROOT" label)
              instr_line
              (Program.Instruction.to_string
-                (With_loc.Def.to_program_instruction instruction_with_loc)))
+                (Program.Instruction.of_definition instruction_with_loc.instruction)))
     |> String.concat ~sep:"\\n"
 
   let render_node ({ out; in_; _ } : t) : string =

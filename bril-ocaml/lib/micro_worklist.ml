@@ -172,7 +172,7 @@ module Reaching_def_ops = struct
 
   (* First kill the existing variable in the map. Then add the new variable *)
   let set_definition (var_def_map : data) (def : With_loc.Def.t) =
-    let declared_variable = With_loc.Def.declared_variable def in
+    let declared_variable = Program.Instruction.Definition.assignment_var def.instruction in
     let removed_def_map = Var_def_map.remove var_def_map declared_variable in
     Var_def_map.upsert removed_def_map declared_variable def
 
@@ -223,7 +223,7 @@ module Liveness_analysis_ops = struct
      Then, all the uses of the instruction will get added to the variable set
      *)
   let transform (live_vars : data) (instr : With_loc.Instr.t) =
-    let declared_variable = With_loc.Instr.declared_variable instr in
+    let declared_variable = Program.Instruction.declared_var instr.instruction in
     let removed_live_vars =
       Option.value_map declared_variable ~default:live_vars ~f:(fun declared_variable ->
           Set.remove live_vars declared_variable)

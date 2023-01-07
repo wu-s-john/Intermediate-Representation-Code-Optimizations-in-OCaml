@@ -52,7 +52,7 @@ module Make (Key : Comparable) (Value : Comparable) = struct
   let to_list (t : t) : Value.t list = Map.data t |> List.bind ~f:Set.to_list
   let keys (t : t) : Key.t list = Map.keys t
 
-  let of_alist
+  let create
       (module Key_value : Value_with_key with type t = Value.t and type key = Key.t)
       (list : (Key.t * Value.t) list)
     =
@@ -66,4 +66,7 @@ module Make (Key : Comparable) (Value : Comparable) = struct
         match Map.add set ~key ~data:Value.Set.empty with
         | `Ok new_set -> new_set
         | `Duplicate -> set)
+
+  let of_alist (list : (Key.t * Value.t) list) : t =
+    Key.Map.of_alist_multi list |> Map.map ~f:Value.Set.of_list
 end
