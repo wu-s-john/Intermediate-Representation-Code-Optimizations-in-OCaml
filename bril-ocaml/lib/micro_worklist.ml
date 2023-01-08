@@ -166,7 +166,7 @@ module Reaching_def_ops = struct
   type item = With_loc.Instr.t
 
   let items (block : t) : item list =
-    let label = block.label in
+    let label = Program.Block.key block in
     List.mapi (Program.Block.all_instrs block) ~f:(fun instr_line instr ->
         { With_loc.instruction = instr; label; instr_line })
 
@@ -177,7 +177,7 @@ module Reaching_def_ops = struct
     Var_def_map.upsert removed_def_map declared_variable def
 
   let transform (def_map : data) With_loc.{ label; instr_line; instruction } =
-    let def = With_loc.Def.create instruction in
+    let def = Program.Instruction.to_definition instruction in
     Option.value_map def ~default:def_map ~f:(fun def ->
         set_definition def_map { instruction = def; label; instr_line })
 
@@ -211,7 +211,7 @@ module Liveness_analysis_ops = struct
   type item = With_loc.Instr.t
 
   let items (block : t) : item list =
-    let label = block.label in
+    let label = Program.Block.key block in
     List.mapi (Program.Block.all_instrs block) ~f:(fun instr_line instr ->
         { With_loc.instruction = instr; label; instr_line })
 
@@ -335,6 +335,8 @@ let create_interference_graph
       reaching_def_map
       reaching_def_flow_traverser
   in
-  let undirected_edges = List.bind aligned_live_vars_and_defs ~f:(fun (var_def_map, live_vars) ->
-      get_pairs live_vars var_def_map) in
+  let undirected_edges =
+    List.bind aligned_live_vars_and_defs ~f:(fun (var_def_map, live_vars) ->
+        get_pairs live_vars var_def_map)
+  in
   Undirected_graph.Poly.of_alist (module With_loc.Def) undirected_edges

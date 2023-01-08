@@ -1,5 +1,7 @@
+open Core
+
 type t = {
   name : string;
   typ : Type.t; [@key "type"]
 }
-[@@deriving yojson]
+[@@deriving yojson, eq, hash, sexp]

@@ -7,17 +7,15 @@ let read_json ~filename : Yojson.Safe.t Deferred.t =
       let%map json = Process.run_exn ~prog:"bril2json" ~args:[] ~stdin:contents () in
       Yojson.Safe.from_string json)
 
-let read_bril ~(filename : string) : (Program.t, Json_repr.Error.t) Deferred.Result.t =
+let read_bril ~(filename : string) : (Program.t, string) Deferred.Result.t =
   let%map json = read_json ~filename in
-  match Json_repr.Program.of_yojson json with
-  | Ok json_repr -> Program.of_json_repr json_repr
-  | Error error -> Core.Error (`Json_parse_error error :> Json_repr.Error.t)
+  Program.of_yojson json
 
 let read_bril_exn ~(filename : string) =
   let%map program = read_bril ~filename in
   match program with
   | Ok program -> program
-  | Error error -> failwithf !"Could not deserialize program %{sexp:Json_repr.Error.t}" error ()
+  | Error error -> failwithf !"Could not deserialize program %s" error ()
 
 let to_human_readable_bril (json : Yojson.Safe.t) : string Deferred.t =
   Process.run_exn ~prog:"bril2txt" ~args:[] ~stdin:(Yojson.Safe.pretty_to_string json) ()
@@ -46,8 +44,7 @@ let test_optimization ~(filename : string) ~(expected : string) ~(f : Program.t 
   |> Deferred.bind ~f:(function
          | Ok (computed_program, expected_program) ->
            assert_program (computed_program, filename) (expected_program, expected)
-         | Error error ->
-           failwithf !"Could not deserialize program %{sexp:Json_repr.Error.t}" error ())
+         | Error error -> failwithf !"Could not deserialize program %s" error ())
 
 let test_local_optimization
     ~(filename : string)

@@ -11,7 +11,7 @@ let rec dead_code_elimination (block : Block.t) : Block.t =
       ~f:(fun index (acc_dead_indices, unused_variables) instr ->
         let used_variables = Instruction.used_vars (instr :> Instruction.t) in
         let new_unused_variables = Set.fold used_variables ~init:unused_variables ~f:Map.remove in
-        match Instruction.dest instr with
+        match Instruction.normal_declared_var instr with
         | None -> (acc_dead_indices, new_unused_variables)
         | Some variable_name ->
           let dead_index = Map.find new_unused_variables variable_name in
@@ -25,9 +25,9 @@ let rec dead_code_elimination (block : Block.t) : Block.t =
           (updated_acc_dead_indices, updated_last_def))
     |> fun (acc_dead_indices, unused_variables) ->
     let used_terminal_instruction_var =
-      match block.terminal with
+      match Block.terminal block with
       | `Control instr -> Instruction.used_vars (instr :> Instruction.t)
-      | _ -> String.Set.empty
+      | _ -> Variable.Set.empty
     in
     ( acc_dead_indices,
       Map.filter_keys unused_variables ~f:(fun name ->
@@ -42,15 +42,6 @@ let rec dead_code_elimination (block : Block.t) : Block.t =
     dead_code_elimination new_block
 
 let nop_digest = Md5.digest_string "nop"
-
-let compute_dest (instr : Instruction.normal) : string option =
-  match instr with
-  | `Binary instr -> Some instr.dest
-  | `Unary instr -> Some instr.dest
-  | `Const instr -> Some instr.dest
-  | `Nop -> None
-  | `Print _ -> None
-  | `Call instr -> Option.map instr.dest ~f:(fun dest -> dest.dest)
 
 module LVN_container = struct
   module Normalized_expression = struct
@@ -269,7 +260,7 @@ module LVN_container = struct
     }
 end
 
-let local_value_numbering ({label; instrs; terminal } : Block.t) : Block.t =
+let local_value_numbering ({ label; instrs; terminal } : Block.t) : Block.t =
   let lvn_container = LVN_container.create () in
   printf !"\nInstructions: %{sexp:Instruction.normal list}" instrs;
   List.iter instrs ~f:(LVN_container.process_instruction lvn_container);

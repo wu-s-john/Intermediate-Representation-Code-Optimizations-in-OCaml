@@ -1,18 +1,16 @@
 open Core
 
-type label = string [@@deriving compare, equal, sexp, hash, to_yojson]
-
 module type S = sig
   module Var : Comparable.S
 
   type binary = {
-    dest : string;
+    dest : Var.t;
     typ : Type.t;
     op : Op.Binary.t;
     arg1 : Var.t;
     arg2 : Var.t;
   }
-  [@@deriving sexp, compare, hash, eq, to_yojson]
+  [@@deriving sexp, compare, hash, eq]
 
   type unary = {
     dest : Var.t;
@@ -21,13 +19,13 @@ module type S = sig
     op : Op.Unary.t;
     arg : Var.t;
   }
-  [@@deriving sexp, compare, hash, eq, to_yojson]
+  [@@deriving sexp, compare, hash, eq]
 
   (* Using a Variable *)
   type br = {
     arg : Var.t;
-    true_label : label;
-    false_label : label;
+    true_label : Label.t;
+    false_label : Label.t;
   }
   [@@deriving sexp, compare, hash, eq]
 
@@ -36,12 +34,12 @@ module type S = sig
     (* This dest might be a differnt type in the future*)
     typ : Type.t;
   }
-  [@@deriving compare, equal, sexp, hash, to_yojson]
+  [@@deriving compare, equal, sexp, hash]
 
-  type call = {
+  type 'dest call = {
     func_name : string;
     args : Var.t list;
-    dest : dest option; (* This dest might be a differnt type in the future*)
+    dest : 'dest;
   }
   [@@deriving compare, equal, sexp, hash]
 
@@ -50,64 +48,79 @@ module type S = sig
     (* This dest might be a differnt type in the future*)
     value : [ `Int of int | `Bool of bool ];
   }
-  [@@deriving compare, equal, sexp, hash, to_yojson]
+  [@@deriving compare, equal, sexp, hash]
 
   type ret = Var.t option [@@deriving compare, equal, sexp, hash]
 
   module Instruction : sig
+    type 'dest definition_instr =
+      [ `Const of const
+      | `Binary of binary
+      | `Unary of unary
+      | `Call of 'dest call
+      ]
+    [@@deriving compare, eq, sexp, hash]
+
+    module Definition : sig
+      type t =
+        [ `Const of const
+        | `Binary of binary
+        | `Unary of unary
+        | `Call of dest call
+        ]
+      [@@deriving compare, equal, hash]
+
+      val sexp_of_t : t -> Base.Sexp.t
+
+      val t_of_sexp : Base.Sexp.t -> t
+
+      val assignment_var : t -> Var.t
+    end
+
     type normal =
       [ `Const of const
       | `Binary of binary
       | `Unary of unary
-      | `Call of call
+      | `Call of dest option call
       | `Print of Var.t list
       | `Nop
       ]
-    [@@deriving compare, equal, sexp, hash, to_yojson]
+    [@@deriving compare, equal, sexp, hash]
 
     type control =
-      [ `Jmp of label
+      [ `Jmp of Label.t
       | `Br of br
       | `Ret of Var.t option
       ]
-    [@@deriving compare, equal, sexp, hash, to_yojson]
+    [@@deriving compare, equal, sexp, hash]
 
     type t =
       [ normal
       | control
-      | `Label of Var.t
+      | `Label of Label.t
       ]
-    [@@deriving compare, equal, sexp, hash, to_yojson]
+    [@@deriving compare, equal, sexp, hash, yojson]
 
-    val of_json_repr : Json_repr.Instruction.t -> (t, Json_repr.Error.t) Result.t
-    val to_json_repr : t -> Json_repr.Instruction.t
+    val of_definition : Definition.t -> t
+    val to_definition : t -> Definition.t option
     val to_string : t -> string
     val used_vars : t -> Var.Set.t
-    val dest : normal -> Var.t option
+    val declared_var : t -> Var.t option
+    val normal_declared_var : normal -> Var.t option
   end
 
   module Block : sig
-    module Key : sig
-      type t = label option [@@deriving sexp, compare, hash, to_yojson]
-
-      val uuid_root : string
-
-      (* HACK: This avoids potential conflicts for graphviz. Labels in language my be called this *)
-      val render : t -> string
-
-      include Hashable.S with type t := t
-      include Comparable.S with type t := t
-    end
+    module Key = Block_name
 
     type terminal_instr =
       [ `Control of Instruction.control
-      | `NextLabel of label
+      | `NextLabel of Label.t
       | `Terminal
       ]
     [@@deriving compare, equal, sexp, hash, to_yojson]
 
     type t = {
-      label : Key.t;
+      label : Label.t option;
       instrs : Instruction.normal list;
       terminal : terminal_instr;
     }
@@ -115,14 +128,13 @@ module type S = sig
 
     val key : t -> Key.t
     val children : t -> Key.t list
-    val to_json_repr : t -> Json_repr.Instruction.t list
-    val of_json_repr : Json_repr.Instruction.t -> (t, Json_repr.Error.t) Result.t
     val defined_variables : t -> Var.Set.t
     val defined_variable_names : t -> String.Set.t
     val used_variables : t -> Var.Set.t
     val used_variable_names : t -> String.Set.t
     val all_instrs : t -> Instruction.t list
     val render : t -> string
+    val terminal : t -> terminal_instr
   end
 
   module Function : sig
@@ -130,26 +142,15 @@ module type S = sig
 
     type t = {
       name : string;
-      args : dest list;
-      (* This is a var with types *)
+      args : Func_arg.t list;
       blocks : blocks;
       typ : Type.t option;
-    }
-    [@@deriving compare, equal, sexp, hash, to_yojson]
-
-    (* This might be private actually *)
-    val to_json_repr : t -> Json_repr.Function.t
-    val of_json_repr : Json_repr.Function.t -> (t, Json_repr.Error.t) Result.t
+    } [@@deriving yojson]
   end
 
-  type t = { functions : Function.t list } [@@derive to_yojson]
+  type t = { functions : Function.t list } [@@deriving yojson]
 
-  (* This might be private actually *)
-  val to_json_repr : t -> Json_repr.Program.t
-  val to_yojson : t -> Yojson.Safe.t
-
-  (* might just work for one type of  *)
-  val of_json_repr : Json_repr.Program.t -> (t, Json_repr.Error.t) Result.t
   val run_local_optimizations : t -> f:(Block.t -> Block.t) -> t
   val select_block_exn : t -> string -> (Block.Key.t, Block.t) Node_traverser.Poly.t
+  val head_function_blocks_exn : t -> (Block.Key.t, Block.t) Node_traverser.Poly.t
 end

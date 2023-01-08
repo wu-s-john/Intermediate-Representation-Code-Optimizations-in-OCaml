@@ -22,12 +22,12 @@ module Reaching_def_ops = struct
   let equal_data = Var_def_map.equal
 
   let process_instruction def_map label instr_line instr =
-    let def = With_loc.Def.create instr in
+    let def = Program.Instruction.to_definition instr in
     Option.value_map def ~default:def_map ~f:(fun def ->
         set_definition def_map { instruction = def; label; instr_line })
 
   let transform (block : Block.t) (definitions : data) : data =
-    let label = block.label in
+    let label = Program.Block.key block in
     List.foldi
       (Program.Block.all_instrs block)
       ~init:definitions
@@ -91,7 +91,11 @@ let create_def_use_map (traverser : (Block.Key.t, Block.t) Node_traverser.Poly.t
           in
           (* Update reaching def *)
           let new_reaching_def =
-            Reaching_def_ops.process_instruction reaching_defs block.label instr_line instr
+            Reaching_def_ops.process_instruction
+              reaching_defs
+              (Program.Block.key block)
+              instr_line
+              instr
           in
           (* Add the relationship to the map *)
           let new_def_use_map =
@@ -99,7 +103,7 @@ let create_def_use_map (traverser : (Block.Key.t, Block.t) Node_traverser.Poly.t
                 Def_use_map.upsert
                   def_use_map
                   def
-                  { instruction = instr; label = block.label; instr_line })
+                  { instruction = instr; label = Program.Block.key block; instr_line })
           in
           (new_def_use_map, new_reaching_def))
       |> fst)
