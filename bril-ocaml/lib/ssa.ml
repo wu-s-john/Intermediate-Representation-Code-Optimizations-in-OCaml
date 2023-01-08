@@ -32,7 +32,11 @@ end
 
 (* Data structure that contain all the phis for a block *)
 module Block_phi_function = struct
-  type value = {ssa_var : Variable.SSA.t; phi : Single_var_phi_function.t}
+  type value = {
+    ssa_var : Variable.SSA.t;
+    phi : Single_var_phi_function.t;
+  }
+
   type t = Single_var_phi_function.t Variable.Map.t
 
   let empty = Variable.Map.empty
@@ -77,6 +81,7 @@ module Counter_map = struct
 end
 
 type rename_scope = Variable.SSA.t With_loc.t Variable.Map.t
+type ssa_variable_names = Variable.SSA.t Variable.Map.t
 
 module Rename_state = struct
   type t = {
@@ -99,11 +104,32 @@ module Rename_state = struct
     in
     ({ counter_map; rename_scope }, new_ssa_variable)
 
-  let process rename_state block_phi_function  = failwith "Bithc"
+  let generate_ssa_node_var { counter_map; rename_scope } label variable_name =
+    let (counter_map, counter_id) = Counter_map.increment counter_map variable_name in
+    let new_ssa_variable = Variable.SSA.{ name = variable_name; counter_id } in
+    let rename_scope =
+      Map.set
+        rename_scope
+        ~key:variable_name
+        ~data:{ instruction = new_ssa_variable; label; instr_line = -1 }
+    in
+    ({ counter_map; rename_scope }, new_ssa_variable)
+
+  let name_phi_variables (t : t) (label : Block_name.t) (block_phi_function : Block_phi_function.t)
+      : t * ssa_variable_names
+    =
+    let (new_t, var_to_ssa_var_map) =
+      block_phi_function
+      |> Map.keys
+      |> List.fold_map ~init:t ~f:(fun t variable ->
+             let (new_t, ssa_var) = generate_ssa_node_var t label variable in
+             (new_t, (variable, ssa_var)))
+    in
+    (new_t, Variable.Map.of_alist_exn var_to_ssa_var_map)
 
   let rename
       ({ rename_scope; _ } as t)
-      ({ instruction; label; instr_line } as instr_with_loc : Regular.Instruction.normal With_loc.t)
+      ({ instruction; _ } as instr_with_loc : Regular.Instruction.normal With_loc.t)
       : t * Program.SSA.Instruction.normal
     =
     match instruction with
@@ -193,6 +219,7 @@ type t = {
   acc_block_map : Program.SSA.Block.t Block_name.Map.t;
   phis : Phi_map.t;
   rename_state : Rename_state.t;
+  ssa_variable_names : ssa_variable_names Block_name.Map.t;
 }
 
 (* TODO: There is a huge bug where  *)
@@ -200,9 +227,11 @@ let rename_block
     (block : Regular.Block.t)
     (block_phi_function : Block_phi_function.t)
     (rename_state : Rename_state.t)
-    : Rename_state.t * Program.SSA.Block.t
+    : Rename_state.t * Variable.SSA.t Variable.Map.t * Program.SSA.Block.t
   =
-  let rename_state = Rename_state.process rename_state block_phi_function in
+  let (rename_state, ssa_var_map) =
+    Rename_state.name_phi_variables rename_state (Regular.Block.key block) block_phi_function
+  in
   let (new_rename_state, instructions) =
     List.fold_map
       (Regular.Block.all_normal_instrs_with_line block)
@@ -215,7 +244,9 @@ let rename_block
   let (new_rename_state, terminal_instr) =
     Rename_state.rename_control new_rename_state (Regular.Block.terminal block)
   in
-  (new_rename_state, { label = block.label; instrs = instructions; terminal = terminal_instr })
+  ( new_rename_state,
+    ssa_var_map,
+    { label = block.label; instrs = instructions; terminal = terminal_instr } )
 
 (* Get all the variables that the block is demanding. Add them to the  *)
 let update_phis_from_successors
@@ -245,15 +276,15 @@ let update_phis_from_successors
           in
           Map.set phi_map ~key:(Regular.Block.key successor_block) ~data:phi))
 
-let rec rename
+let rec rename_helper
     (func : Program.Regular.Function.t)
     (dominator_tree : Block_name.Set.t Block_name.Map.t)
     block_name
-    { acc_block_map; phis; rename_state }
+    { acc_block_map; phis; rename_state; ssa_variable_names }
     : t
   =
   let phi = Map.find phis block_name |> Option.value ~default:Block_phi_function.empty in
-  let (updated_rename_state, ssa_block) =
+  let (updated_rename_state, ssa_var_map, ssa_block) =
     rename_block (Node_traverser.Poly.find_exn func.blocks block_name) phi rename_state
   in
   let updated_phis = update_phis_from_successors func block_name phis rename_state in
@@ -263,6 +294,7 @@ let rec rename
       acc_block_map = updated_acc_block_map;
       phis = updated_phis;
       rename_state = updated_rename_state;
+      ssa_variable_names = Map.set ssa_variable_names ~key:block_name ~data:ssa_var_map;
     }
   in
   let immediate_dominators =
@@ -270,6 +302,8 @@ let rec rename
   in
   let new_t =
     Block_name.Set.fold immediate_dominators ~init:updated_t ~f:(fun t block_name ->
-        rename func dominator_tree block_name t)
+        rename_helper func dominator_tree block_name t)
   in
   { new_t with rename_state }
+
+(* TODO: Build SSA function *)
