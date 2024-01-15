@@ -1,3 +1,7 @@
+Building Intermediate Representation Optimizations for Bril
+=========================================================
+John Wu wrote some code optimizations for Bril, a toy programming language to build intermediate code optimization. To see the implementations I built, take a look at the `bril-ocaml/` folder.
+
 Bril: A Compiler Intermediate Representation for Learning
 =========================================================
 
