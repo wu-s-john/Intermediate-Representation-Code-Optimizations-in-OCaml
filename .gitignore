@@ -8,3 +8,8 @@ yarn.lock
 hypothesis_*
 __pycache__
 .vscode
+benchmarks/_build/*
+test/print/_build
+examples/test/*/_build/*
+*.dot
+.DS_Store
